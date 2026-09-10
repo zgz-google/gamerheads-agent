@@ -121,7 +121,7 @@ def test_evaluate_stage_status_transitions():
     # 4. Streamer video is BLOCKED because avatar is missing
     status_video = evaluate_stage_status("streamer_video", state)
     assert status_video["status"] == "BLOCKED"
-    assert "Stage 2 avatar" in status_video["summary"]
+    assert "streamer avatar" in status_video["summary"]
 
     # 5. Generate avatar -> Streamer video becomes PENDING
     record_artifact(state, "avatar", {"image": "anchor.png"}, now=120.0)
@@ -158,8 +158,8 @@ def test_render_pipeline_kanban():
     }
     kanban = render_pipeline_kanban(state)
     assert "PRODUCTION PIPELINE REAL-TIME KANBAN" in kanban
-    assert "Stage 1 [Commentary Script]: ✅ READY" in kanban
-    assert "Stage 3 [Streamer Video]: ⚠️ OUT_OF_SYNC" in kanban
+    assert "[Commentary Script]: ✅ READY" in kanban
+    assert "[Streamer Video]: ⚠️ OUT_OF_SYNC" in kanban
     assert "ACTIVE DIRECTOR FOCUS" in kanban
     assert "OUT OF SYNC" in kanban
 
@@ -249,9 +249,9 @@ def test_director_instruction_dynamic_injection():
     assert "Gaming Platform (gamingDevice): Console" in instruction
     assert "Video Aspect Ratio (aspectRatio): 9:16" in instruction
     assert "【PRODUCTION PIPELINE REAL-TIME KANBAN】" in instruction
-    assert "Stage 1 [Commentary Script]: ✅ READY" in instruction
+    assert "[Commentary Script]: ✅ READY" in instruction
     assert "Deliverable: 1 commentary segments (5s total)" in instruction
-    assert "Stage 2 [Streamer Avatar]: ✅ READY" in instruction
+    assert "[Streamer Avatar]: ✅ READY" in instruction
     assert "Deliverable: anchor_01.png" in instruction
 
 
@@ -285,7 +285,7 @@ def test_director_instruction_out_of_sync_alignment():
     instruction = director_instruction(mock_ctx)
     # Kanban section flags OUT OF SYNC
     assert (
-        "Stage 2 [Streamer Avatar]: ⚠️ OUT_OF_SYNC - Avatar spec updated; portrait needs re-generation."
+        "[Streamer Avatar]: ⚠️ OUT_OF_SYNC - Avatar spec updated; portrait needs re-generation."
         in instruction
     )
     # Deliverable directly under the Stage card flags Stale
@@ -293,6 +293,6 @@ def test_director_instruction_out_of_sync_alignment():
     assert "Room Setting: old loft" in instruction
     # Active focus alerts the director
     assert (
-        "ACTIVE DIRECTOR FOCUS: Downstream assets Stage 2 (Streamer Avatar) are OUT OF SYNC with upstream changes!"
+        "ACTIVE DIRECTOR FOCUS: Downstream deliverables (Streamer Avatar) are OUT OF SYNC with upstream changes!"
         in instruction
     )

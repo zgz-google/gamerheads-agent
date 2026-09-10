@@ -423,9 +423,9 @@ def evaluate_stage_status(stage_name: str, state: dict[str, Any]) -> dict[str, A
         if not has_script or not has_avatar:
             missing = []
             if not has_script:
-                missing.append("Stage 1 script")
+                missing.append("commentary script")
             if not has_avatar:
-                missing.append("Stage 2 avatar")
+                missing.append("streamer avatar")
             return {
                 "status": "BLOCKED",
                 "summary": f"Prerequisites missing: requires {' and '.join(missing)}.",
@@ -457,7 +457,7 @@ def evaluate_stage_status(stage_name: str, state: dict[str, Any]) -> dict[str, A
             if not has_footage:
                 missing.append("gameplay footage")
             if not has_streamer:
-                missing.append("Stage 3 streamer video")
+                missing.append("Stage 3 streamer video (streamer reaction video)")
             return {
                 "status": "BLOCKED",
                 "summary": f"Prerequisites missing: requires {' and '.join(missing)}.",
@@ -508,20 +508,20 @@ def render_pipeline_kanban(state: dict[str, Any]) -> str:
 
         if status == "READY":
             emoji = "✅"
-            ready_stages.append(f"Stage {stage_num} ({stage_name})")
+            ready_stages.append(stage_name)
         elif status == "OUT_OF_SYNC":
             emoji = "⚠️"
             has_out_of_sync = True
-            out_of_sync_stages.append(f"Stage {stage_num} ({stage_name})")
+            out_of_sync_stages.append(stage_name)
         elif status == "PENDING":
             emoji = "⏳"
-            pending_or_blocked.append(f"Stage {stage_num} ({stage_name})")
+            pending_or_blocked.append(stage_name)
         else:  # BLOCKED
             emoji = "🛑"
-            pending_or_blocked.append(f"Stage {stage_num} ({stage_name})")
+            pending_or_blocked.append(stage_name)
 
         lines.append(
-            f"- Stage {stage_num} [{stage_name}]: {emoji} {status} - {summary}"
+            f"- [{stage_name}]: {emoji} {status} - {summary}"
         )
 
         # Embed Deliverable details directly under each stage card
@@ -582,16 +582,16 @@ def render_pipeline_kanban(state: dict[str, Any]) -> str:
     lines.append("--------------------------------------------------")
     if has_out_of_sync:
         lines.append(
-            f"👉 ACTIVE DIRECTOR FOCUS: Downstream assets {', '.join(out_of_sync_stages)} are OUT OF SYNC with upstream changes!"
+            f"👉 ACTIVE DIRECTOR FOCUS: Downstream deliverables ({', '.join(out_of_sync_stages)}) are OUT OF SYNC with upstream changes!"
         )
         lines.append(
-            "Assess user intent (direct modification vs. exploratory research) and apply director principles to resolve out-of-sync deliverables. Keep internal agents invisible."
+            "Assess user intent (direct modification vs. exploratory research) and apply director principles to resolve out-of-sync deliverables. Present the reworked deliverable to the user and ask for feedback before continuing. Keep internal agents invisible."
         )
     elif "composite" in [
         s for s in stages if evaluate_stage_status(s, state)["status"] == "READY"
     ]:
         lines.append(
-            "👉 ACTIVE DIRECTOR FOCUS: Production is 100% complete! Present the final reaction video to the user."
+            "👉 ACTIVE DIRECTOR FOCUS: Production is 100% complete! Present the final reaction video to the user and ask for their feedback."
         )
     else:
         script_st = evaluate_stage_status("script", state)["status"]
@@ -600,19 +600,27 @@ def render_pipeline_kanban(state: dict[str, Any]) -> str:
 
         if script_st == "BLOCKED":
             lines.append(
-                "👉 ACTIVE DIRECTOR FOCUS: Awaiting gameplay footage to kick off Stage 1 (Commentary Script)."
+                "👉 ACTIVE DIRECTOR FOCUS: Awaiting gameplay footage to draft the commentary script."
             )
         elif script_st == "READY" and avatar_st != "READY":
             lines.append(
-                "👉 ACTIVE DIRECTOR FOCUS: Commentary script is ready! Next step is establishing the streamer avatar (Stage 2) so we can proceed to render the reaction video."
+                "👉 ACTIVE DIRECTOR FOCUS: Commentary script is ready! Present the script to the user, ask for feedback on lines and pacing, and confirm they are satisfied before moving on to design the streamer avatar portrait."
+            )
+        elif avatar_st == "READY" and script_st != "READY":
+            lines.append(
+                "👉 ACTIVE DIRECTOR FOCUS: Streamer avatar portrait is ready! Present the visual style and setup to the user, ask for feedback on appearance and room setting, and confirm they are satisfied before drafting the commentary script."
             )
         elif script_st == "READY" and avatar_st == "READY" and video_st != "READY":
             lines.append(
-                "👉 ACTIVE DIRECTOR FOCUS: Both script and avatar are ready! Ready to start rendering the streamer video (Stage 3)."
+                "👉 ACTIVE DIRECTOR FOCUS: Both commentary script and streamer avatar portrait are ready! Confirm user approval, then proceed to render the streamer reaction video."
+            )
+        elif video_st == "READY":
+            lines.append(
+                "👉 ACTIVE DIRECTOR FOCUS: Streamer reaction video is ready! Present the video clip to the user, ask for feedback, and confirm approval before generating the final composite video."
             )
         else:
             lines.append(
-                "👉 ACTIVE DIRECTOR FOCUS: Guide the user forward to complete the remaining production stages."
+                "👉 ACTIVE DIRECTOR FOCUS: Guide the user forward to complete the remaining production deliverables."
             )
 
     return "\n".join(lines)
