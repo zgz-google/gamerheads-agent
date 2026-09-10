@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import logging
 import os
 import shutil
 import tempfile
@@ -29,7 +31,11 @@ from google.adk.models import Gemini
 from google.adk.tools import ToolContext
 from google.genai import types
 
-from app.media.clips import extract_last_frame, normalize_clip
+from app.media.clips import (
+    extract_last_frame_data_url,
+    normalize_clip,
+    probe_duration,
+)
 from app.media.composite import composite_streamer_over_gameplay
 from app.media.omni import omni_interaction
 from app.media.stitch import concat_clips
@@ -38,6 +44,8 @@ from app.pipeline import evaluate_stage_status, record_artifact
 from app.tools.spec_tools import update_composite_spec
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 
@@ -177,16 +185,28 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
     rendered_clips: list[str] = []
 
     try:
+        logger.info(
+            "[streamer] rendering %d segments at %s", len(segments), aspect_ratio
+        )
         prev_pose_b64: str | None = None
 
         # 3. Continuity Chain Render Loop
         for index, seg in enumerate(segments):
             dur = int(seg.get("duration", 5))
+            dialogue = seg.get("dialogue", "")
+            logger.info(
+                "[streamer] segment %d/%d (%ss): %s",
+                index + 1,
+                len(segments),
+                dur,
+                dialogue[:60],
+            )
+
             prompt_text = build_omni_prompt(
                 visual_prompt=seg.get(
                     "prompt", "Streamer looks focused and reacts naturally."
                 ),
-                dialogue=seg.get("dialogue", ""),
+                dialogue=dialogue,
                 duration_seconds=dur,
                 gaming_device=gaming_device,
             )
@@ -194,39 +214,75 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
             raw_path = os.path.join(work_dir, f"raw_{index}.mp4")
             norm_path = os.path.join(work_dir, f"clip_{index}.mp4")
 
-            start_frame = (
-                prev_pose_b64
-                if (prev_pose_b64 and index > 0)
-                else golden_anchor_data_url
-            )
+            start_frame = prev_pose_b64 or golden_anchor_data_url
 
             # Invoke Omni Flash (or synthetic mock in test mode)
-            await omni_interaction(
-                prompt=prompt_text,
-                start_frame_base64=start_frame,
-                duration_seconds=dur,
-                aspect_ratio=aspect_ratio,
-                dest_path=raw_path,
-            )
+            try:
+                await omni_interaction(
+                    prompt=prompt_text,
+                    start_frame_base64=start_frame,
+                    duration_seconds=dur,
+                    aspect_ratio=aspect_ratio,
+                    dest_path=raw_path,
+                    continuity=bool(prev_pose_b64),
+                )
+            except Exception as err:
+                # This message is the only account of why a multi-minute render
+                # died, and it otherwise reaches the model without ever reaching
+                # the logs -- which makes the failure invisible to anyone reading them.
+                logger.error(
+                    "[streamer] segment %d/%d failed: %s", index + 1, len(segments), err
+                )
+                raise RuntimeError(
+                    f"segment {index + 1} of {len(segments)} failed after retries ({err}). "
+                    f"{len(rendered_clips)} segment(s) rendered before it."
+                ) from err
 
             # Normalize frame rate, pixel format, and audio (canonical 24fps, PTS reset)
             await normalize_clip(raw_path, norm_path, fps=24)
+            # Cloud Run's /tmp is RAM: the raw clip is dead weight once normalized,
+            # and holding every one of them until the end doubles the peak.
+            with contextlib.suppress(OSError):
+                os.remove(raw_path)
             rendered_clips.append(norm_path)
 
             # Extract last frame for continuity into next segment
             if index < len(segments) - 1:
                 try:
-                    last_frame_path = os.path.join(work_dir, f"last_frame_{index}.jpg")
-                    await extract_last_frame(norm_path, last_frame_path)
-                    with open(last_frame_path, "rb") as lf_file:
-                        prev_pose_b64 = f"data:image/jpeg;base64,{base64.b64encode(lf_file.read()).decode('utf-8')}"
-                except Exception:
-                    # Fallback to golden anchor avatar if frame extraction fails
-                    prev_pose_b64 = golden_anchor_data_url
+                    prev_pose_b64 = await extract_last_frame_data_url(norm_path)
+                except Exception as err:
+                    # Not fatal: the next segment falls back to the golden anchor,
+                    # which costs continuity on one cut rather than the whole run.
+                    logger.warning(
+                        "[streamer] could not read the last frame of segment %d; "
+                        "falling back to the avatar (%s)",
+                        index + 1,
+                        err,
+                    )
+                    prev_pose_b64 = None
 
         # 4. Concatenate All Clips
         concat_output_path = os.path.join(work_dir, "streamer_stitched.mp4")
         await concat_clips(rendered_clips, concat_output_path)
+        for clip in rendered_clips:
+            with contextlib.suppress(OSError):
+                os.remove(clip)
+
+        # The script's durations are what we *asked* for. Nothing in the
+        # Interactions request carries a length -- "Duration: 5 seconds." is a
+        # sentence in the prompt -- so the clips come back as long as the model
+        # felt like, and the sum of the script is a guess. The composite runs to
+        # the real length, so report the real length.
+        requested_dur = sum(int(s.get("duration", 5)) for s in segments)
+        actual_dur = probe_duration(concat_output_path)
+        total_dur = round(actual_dur, 1) if actual_dur else requested_dur
+        if actual_dur and abs(actual_dur - requested_dur) >= 1:
+            logger.warning(
+                "[streamer] rendered %.1fs against a %ds script -- the clip "
+                "generator does not honour the requested per-segment length",
+                actual_dur,
+                requested_dur,
+            )
 
         # 5. Save Artifact into ADK Artifact Service
         with open(concat_output_path, "rb") as f:
@@ -241,8 +297,6 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
         )
         await tool_context.save_artifact(artifact_name, part)
 
-        total_dur = sum(int(s.get("duration", 5)) for s in segments)
-
         # 6. Record in state['artifacts']['streamer_video']
         record_artifact(
             state,
@@ -250,6 +304,7 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
             {
                 "artifact_name": artifact_name,
                 "durationSeconds": total_dur,
+                "requestedSeconds": requested_dur,
                 "segmentCount": len(segments),
                 "aspectRatio": aspect_ratio,
             },
@@ -263,6 +318,11 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
             f"Streamer reaction video is ready for final composite over gameplay footage."
         )
 
+    except Exception as err:
+        # A tool that raises reaches the Director as a stack trace it cannot act
+        # on. Every other failure in this file is a sentence, so this one is too.
+        logger.exception("[streamer] render failed")
+        return f"Cannot generate streamer video: {err}"
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -395,7 +455,7 @@ async def generate_composite_video(tool_context: ToolContext) -> str:
                 )
             else:
                 notes.append(
-                    f"- The streamer track is {abs(drift)}s shorter than the footage, so its last frame is held until the footage finishes."
+                    f"- The footage is {abs(drift)}s longer than the streamer track, so its tail is not in the finished video."
                 )
 
         if result.get("gameplayFit") == "contain":

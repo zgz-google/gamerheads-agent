@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import tempfile
 import uuid
@@ -30,16 +31,32 @@ from app.media.clips import get_ffmpeg_exe
 
 load_dotenv()
 
-OMNI_MODEL = os.getenv("OMNI_MODEL", "gemini-omni-flash-preview")
+logger = logging.getLogger(__name__)
+
+OMNI_MODEL = os.getenv("OMNI_MODEL", "gemini-omni-1.1-flash-preview")
 MAX_ATTEMPTS = 3
 ATTEMPT_TIMEOUT_SECONDS = 180
+# The generated clip is fetched separately from the interaction that produced it,
+# so it gets its own budget rather than eating into the 180s render window.
+DOWNLOAD_TIMEOUT_SECONDS = 300
+
+
+class OmniRequestError(RuntimeError):
+    """A rejection the API will give again. Raised past the retry loop, not into it."""
 
 
 def strip_data_url(data: str) -> str:
     """Strips data URL header if present (e.g. 'data:image/png;base64,')."""
-    if "," in data and "data:" in data[:30]:
+    if data.startswith("data:") and "," in data:
         return data.split(",", 1)[1]
     return data
+
+
+def data_url_mime(data: str, default: str = "image/jpeg") -> str:
+    """The mime type named in a data URL. Bare base64 has none, so it gets the default."""
+    if not data.startswith("data:") or "," not in data:
+        return default
+    return data[5 : data.index(",")].split(";", 1)[0] or default
 
 
 def find_video_in_interaction(
@@ -163,6 +180,60 @@ async def generate_synthetic_clip(
             os.remove(img_temp)
 
 
+async def post_interaction(
+    url: str, headers: dict[str, str], body: dict[str, Any]
+) -> dict[str, Any]:
+    """POSTs one interaction, retrying only what a retry can fix.
+
+    Three attempts, 2s then 4s backoff, 180s per attempt. 5xx and 429 are the
+    transient cases and are retried; a 4xx says the request itself is wrong, so
+    it is raised straight out -- two more attempts would spend six minutes
+    arriving at the same answer.
+
+    Everything downstream of this call (parsing the response, downloading the
+    clip, spotting a silent rejection) deliberately sits outside the loop: those
+    failures are properties of the interaction that came back, and re-POSTing
+    pays for another render to reproduce them.
+    """
+    timeout = aiohttp.ClientTimeout(total=ATTEMPT_TIMEOUT_SECONDS)
+    last_error: Exception | None = None
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        logger.info("[omni] attempt %d/%d", attempt, MAX_ATTEMPTS)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, headers=headers, json=body) as resp:
+                    if resp.status >= 500 or resp.status == 429:
+                        last_error = RuntimeError(
+                            f"Interactions API transient error ({resp.status}): "
+                            f"{(await resp.text())[:500]}"
+                        )
+                        if attempt < MAX_ATTEMPTS:
+                            await asyncio.sleep(attempt * 2)
+                            continue
+                        raise last_error
+                    if not resp.ok:
+                        raise OmniRequestError(
+                            f"Interactions API request failed ({resp.status}): "
+                            f"{(await resp.text())[:500]}"
+                        )
+                    return await resp.json()
+        except OmniRequestError:
+            raise
+        except Exception as e:
+            # Anything transport-shaped -- timeouts, resets, DNS -- is worth another go.
+            last_error = e
+            if attempt < MAX_ATTEMPTS:
+                logger.warning(
+                    "[omni] attempt %d failed (%s); retrying", attempt, e
+                )
+                await asyncio.sleep(attempt * 2)
+                continue
+            raise
+
+    raise last_error or RuntimeError("Video generation failed after retries.")
+
+
 async def omni_interaction(
     prompt: str,
     start_frame_base64: str,
@@ -170,6 +241,7 @@ async def omni_interaction(
     aspect_ratio: str,
     dest_path: str,
     mock: bool = False,
+    continuity: bool = False,
 ) -> dict:
     """Renders one continuous video clip using Omni Flash image-to-video.
 
@@ -180,6 +252,7 @@ async def omni_interaction(
         aspect_ratio: '16:9' or '9:16'.
         dest_path: Target destination path for output MP4.
         mock: Force synthetic generation (used for tests or offline execution).
+        continuity: True when the start frame came from the previous clip. Log only.
 
     Returns:
         Dict with interactionId and videoPath.
@@ -193,17 +266,18 @@ async def omni_interaction(
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     project = os.getenv("GOOGLE_CLOUD_PROJECT")
 
-    # If neither key nor project is configured, gracefully fall back to synthetic clip
+    # No credentials is a misconfiguration, not a mode. Falling back to a
+    # synthetic clip here would hand back a still frame of the avatar that looks
+    # like a finished render, and nothing downstream can tell the difference.
     if not api_key and not project:
-        await generate_synthetic_clip(
-            start_frame_base64, duration_seconds, aspect_ratio, dest_path
+        raise RuntimeError(
+            "Neither GEMINI_API_KEY nor GOOGLE_CLOUD_PROJECT is set -- set "
+            "GOOGLE_CLOUD_PROJECT (with ADC) for Vertex, or GEMINI_API_KEY for AI "
+            "Studio. Set MOCK_OMNI=1 to render synthetic clips offline instead."
         )
-        return {"interactionId": f"mock-{uuid.uuid4().hex[:8]}", "videoPath": dest_path}
 
     clean_img = strip_data_url(start_frame_base64)
-    mime_type = "image/png"
-    if start_frame_base64.startswith("data:image/jpeg"):
-        mime_type = "image/jpeg"
+    mime_type = data_url_mime(start_frame_base64)
 
     bucket = os.getenv("ARTIFACT_BUCKET_NAME", "")
     response_format: dict[str, Any] = {
@@ -223,14 +297,17 @@ async def omni_interaction(
         url = f"https://generativelanguage.googleapis.com/v1beta/interactions?key={api_key}"
         headers = {"Content-Type": "application/json"}
     else:
-        # Vertex AI ADC
-        import google.auth
-        import google.auth.transport.requests
+        # Vertex AI ADC. The refresh is a blocking HTTP call to the metadata
+        # server, so it goes to a thread rather than stalling the event loop.
+        def _access_token() -> str:
+            import google.auth
+            import google.auth.transport.requests
 
-        creds, _ = google.auth.default()
-        auth_req = google.auth.transport.requests.Request()
-        creds.refresh(auth_req)
-        token = creds.token
+            creds, _ = google.auth.default()
+            creds.refresh(google.auth.transport.requests.Request())
+            return creds.token
+
+        token = await asyncio.to_thread(_access_token)
         url = f"https://aiplatform.googleapis.com/v1beta1/projects/{project}/locations/global/interactions"
         headers = {
             "Content-Type": "application/json",
@@ -240,7 +317,7 @@ async def omni_interaction(
             headers["X-Goog-User-Project"] = project
 
     body = {
-        "model": os.getenv("OMNI_MODEL", OMNI_MODEL),
+        "model": OMNI_MODEL,
         "input": [
             {"type": "text", "text": prompt},
             {"type": "image", "mime_type": mime_type, "data": clean_img},
@@ -249,84 +326,72 @@ async def omni_interaction(
         "generation_config": {"video_config": {"task": "image_to_video"}},
     }
 
-    last_error = None
-    timeout = aiohttp.ClientTimeout(total=ATTEMPT_TIMEOUT_SECONDS)
-
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, headers=headers, json=body) as resp:
-                    if resp.status >= 500 or resp.status == 429:
-                        last_error = RuntimeError(
-                            f"Omni transient error ({resp.status}): {await resp.text()}"
-                        )
-                        if attempt < MAX_ATTEMPTS:
-                            await asyncio.sleep(attempt * 2)
-                            continue
-                        raise last_error
-                    if not resp.ok:
-                        raise RuntimeError(
-                            f"Omni request failed ({resp.status}): {await resp.text()}"
-                        )
-                    interaction = await resp.json()
-
-                    uri, b64_data = find_video_in_interaction(interaction)
-                    interaction_id = interaction.get("id") or str(uuid.uuid4())
-
-                    if b64_data:
-                        v_bytes = base64.b64decode(strip_data_url(b64_data))
-                        with open(dest_path, "wb") as f:
-                            f.write(v_bytes)
-                        return {"interactionId": interaction_id, "videoPath": dest_path}
-
-                    if uri and uri.startswith("http"):
-                        dl_url = uri
-                        dl_headers = {}
-                        if api_key:
-                            if "key=" not in dl_url:
-                                dl_url += (
-                                    f"{'&' if '?' in dl_url else '?'}key={api_key}"
-                                )
-                        elif token:
-                            dl_headers["Authorization"] = f"Bearer {token}"
-
-                        async with session.get(dl_url, headers=dl_headers) as dl_resp:
-                            if dl_resp.ok:
-                                with open(dest_path, "wb") as f:
-                                    f.write(await dl_resp.read())
-                                return {
-                                    "interactionId": interaction_id,
-                                    "videoPath": dest_path,
-                                }
-
-                    if uri and uri.startswith("gs://"):
-                        from google.cloud import storage
-
-                        client = storage.Client()
-                        blob = storage.Blob.from_string(uri, client=client)
-                        blob.download_to_filename(dest_path)
-                        return {"interactionId": interaction_id, "videoPath": dest_path}
-
-                    # Check for silent rejection: API answers 200 with status "completed" but billed zero tokens
-                    spent = int(
-                        (interaction.get("usage") or {}).get("total_input_tokens") or 0
-                    )
-                    if spent == 0:
-                        raise RuntimeError(
-                            "The clip generator accepted the request but produced nothing and billed zero input tokens, "
-                            "which is how it reports a silently rejected source image -- most often one showing a "
-                            "recognisable copyrighted character. Regenerate the avatar as an original design and retry."
-                        )
-
-                    raise RuntimeError("Omni API response contained no video data.")
-
-        except Exception as e:
-            last_error = e
-            if attempt < MAX_ATTEMPTS:
-                await asyncio.sleep(attempt * 2)
-                continue
-            break
-
-    raise RuntimeError(
-        f"Omni generation failed after {MAX_ATTEMPTS} attempts: {last_error}"
+    logger.info(
+        "[omni] generating clip (%s, image_to_video, %ss, %s, continuity=%s)",
+        model_id,
+        duration_seconds,
+        aspect_ratio,
+        continuity,
     )
+
+    interaction = await post_interaction(url, headers, body)
+
+    uri, b64_data = find_video_in_interaction(interaction)
+    interaction_id = interaction.get("id") or str(uuid.uuid4())
+
+    if b64_data:
+        with open(dest_path, "wb") as f:
+            f.write(base64.b64decode(strip_data_url(b64_data)))
+        return {"interactionId": interaction_id, "videoPath": dest_path}
+
+    if uri and uri.startswith("gs://"):
+        def _download_gs() -> None:
+            from google.cloud import storage
+
+            client = storage.Client()
+            storage.Blob.from_string(uri, client=client).download_to_filename(dest_path)
+
+        await asyncio.to_thread(_download_gs)
+        return {"interactionId": interaction_id, "videoPath": dest_path}
+
+    if uri and uri.startswith("http"):
+        dl_url = uri
+        dl_headers: dict[str, str] = {}
+        if api_key:
+            if "key=" not in dl_url:
+                dl_url += f"{'&' if '?' in dl_url else '?'}key={api_key}"
+        elif token:
+            dl_headers["Authorization"] = f"Bearer {token}"
+
+        timeout = aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(dl_url, headers=dl_headers) as dl_resp:
+                # A failed download used to fall through to the "no video data"
+                # branch below, which named the wrong cause: the clip rendered
+                # fine, we just could not fetch it.
+                if not dl_resp.ok:
+                    raise RuntimeError(
+                        f"Downloading the clip failed: HTTP {dl_resp.status}"
+                    )
+                with open(dest_path, "wb") as f:
+                    f.write(await dl_resp.read())
+        return {"interactionId": interaction_id, "videoPath": dest_path}
+
+    # A refused generation is not an error response: the API answers 200 with
+    # status "completed", zero token counts and no output at all, which is
+    # indistinguishable from success until you go looking for the video.
+    spent = int((interaction.get("usage") or {}).get("total_input_tokens") or 0)
+    logger.warning(
+        "[omni] no video in the response (status=%s, input_tokens=%s, keys=[%s])",
+        interaction.get("status", "-"),
+        spent,
+        ",".join(interaction.keys()),
+    )
+    if spent == 0:
+        raise RuntimeError(
+            "The clip generator accepted the request but produced nothing and billed zero input tokens, "
+            "which is how it reports a silently rejected source image -- most often one showing a "
+            "recognisable copyrighted character. Regenerate the avatar as an original design and retry."
+        )
+
+    raise RuntimeError("The clip generator returned no video.")

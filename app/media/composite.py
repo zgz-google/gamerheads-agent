@@ -12,7 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FFmpeg compositing utility: overlays streamer reaction video over gameplay footage."""
+"""FFmpeg compositing utility: overlays streamer reaction video over gameplay footage.
+
+**The output is exactly as long as the streamer track.** Both directions of the
+mismatch are handled in one chain with no branch: the gameplay is padded with a
+clone of its last frame (`tpad`) when it is the shorter one, and `-t` cuts the
+whole thing to the streamer's length either way. A gameplay tail with nobody
+talking over it is dead air; a line of dialogue cut off halfway is a broken
+video, and the call to action lives in the last segment.
+
+This used to run to `max(streamer, gameplay)` and pad the streamer to match,
+which turned every under-covering script into a finished video that froze the
+streamer on their last frame -- silent, uncaptioned -- for the whole remaining
+length of the footage.
+"""
 
 from __future__ import annotations
 
@@ -153,21 +166,18 @@ def build_composite_graph(
 
     if plan["gameplay"]:
         g = plan["gameplay"]
-        target_seconds = max(streamer_seconds, gameplay_seconds or 0.0)
 
-        # Pad gameplay with last frame clone if gameplay is shorter than target duration
-        gameplay_shortfall = max(0.0, target_seconds - (gameplay_seconds or 0.0))
+        # Only pad when the gameplay is the shorter one. The half second is slack
+        # against the probe's rounding, and -t cuts it off again. The streamer is
+        # never padded: it is what sets the length, so it has no shortfall.
+        gameplay_shortfall = (
+            0.0
+            if gameplay_seconds is None
+            else max(0.0, streamer_seconds - gameplay_seconds)
+        )
         gameplay_tpad = (
             f",tpad=stop_mode=clone:stop_duration={gameplay_shortfall + 0.5:.2f}"
             if gameplay_shortfall > 0
-            else ""
-        )
-
-        # Pad streamer with last frame clone if streamer is shorter than target duration
-        streamer_shortfall = max(0.0, target_seconds - streamer_seconds)
-        streamer_tpad = (
-            f",tpad=stop_mode=clone:stop_duration={streamer_shortfall + 0.5:.2f}"
-            if streamer_shortfall > 0
             else ""
         )
 
@@ -191,7 +201,7 @@ def build_composite_graph(
         chains.append(
             f"[1:v]{place},setsar=1{gameplay_tpad},pad={w}:{h}:{g['x']}:{g['y']}:black[bg]"
         )
-        chains.append(f"[0:v]{fit_rect(plan['streamer'])}{streamer_tpad}[fg]")
+        chains.append(f"[0:v]{fit_rect(plan['streamer'])}[fg]")
         chains.append(
             f"[bg][fg]overlay={plan['streamer']['x']}:{plan['streamer']['y']}:eof_action=repeat[composed]"
         )
@@ -303,10 +313,6 @@ async def composite_streamer_over_gameplay(
         subtitles_ass_path=subtitles_ass_path,
     )
 
-    target_dur = streamer_dur
-    if gameplay_dur is not None and effective_layout != "streamer-only":
-        target_dur = max(streamer_dur, gameplay_dur)
-
     cmd = [
         ffmpeg,
         "-y",
@@ -324,7 +330,7 @@ async def composite_streamer_over_gameplay(
         "-map",
         "[a]",
         "-t",
-        f"{target_dur:.3f}",
+        f"{streamer_dur:.3f}",
         "-c:v",
         CANONICAL["video_codec"],
         "-preset",
@@ -365,7 +371,7 @@ async def composite_streamer_over_gameplay(
 
     return {
         "outputPath": output_path,
-        "durationSeconds": round(target_dur, 1),
+        "durationSeconds": round(streamer_dur, 1),
         "streamerDurationSeconds": round(streamer_dur, 1),
         "gameplayDurationSeconds": round(gameplay_dur, 1)
         if gameplay_dur is not None

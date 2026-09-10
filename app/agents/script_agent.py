@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
+import tempfile
 from typing import Any
 
 import aiohttp
@@ -30,12 +33,33 @@ from google.adk.tools import ToolContext
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from app.media.clips import compress_video, probe_duration
 from app.pipeline import evaluate_stage_status, record_artifact
 from app.tools.spec_tools import update_script_spec
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+
+# Same list as avatar_agent.SAFETY_BLOCK_NONE, kept local rather than imported
+# so the two agents stay independent. Gameplay commentary trips the
+# dangerous-content filter on ordinary shooter footage, and a blocked response
+# mid-script is indistinguishable from a broken pipeline.
+SAFETY_BLOCK_NONE = [
+    types.SafetySetting(
+        category=category,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+    for category in [
+        types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+    ]
+]
 
 # ============================================================================
 # 1. Data Models & Clamping / Timeline Utilities
@@ -131,7 +155,7 @@ CRITICAL PRONOUN RULE: Always use gender-neutral pronouns ('they' or 'them') whe
 
 STREAMER_RULES = """
 CRITICAL DURATION & TIMELINE RULES:
-1. **TARGET DURATION & TIMELINE PACING**: Aim for the sum of all segment durations to closely cover the target gameplay video length, broken into consecutive, natural scene beats of **3 to 10 seconds** each.
+1. **TOTAL DURATION**: The sum of all segment durations MUST EXACTLY EQUATE to the length of the uploaded gameplay video.
 2. **SEGMENTATION**: Break the script into consecutive, natural scene beats of **3 to 10 seconds** each.
 3. **STRICT SPOKEN WORD COUNT MATCHING SEGMENT DURATION**:
    - Streamer dialogue must be realistically paced so that the streamer speaks naturally across the full duration of the shot without cutting off or being silent.
@@ -197,6 +221,7 @@ def build_script_prompt(
     game_url: str = "",
     researched_facts: str = "",
     footage_url: str = "",
+    footage_seconds: float | None = None,
 ) -> str:
     device = device or "PC"
     title = title.strip()
@@ -219,8 +244,19 @@ def build_script_prompt(
     else:
         grounding_instruction = "3. **NO SEARCH GROUNDING**: Do NOT use Google Search grounding. Restrict the streamer's commentary strictly to what is directly visible in the gameplay footage. Do not make up features or facts about the game that are not visible."
 
+    # Rule 1 of STREAMER_RULES tells the model its durations must sum to the
+    # length of the footage. Asking it to measure that length off the video it
+    # was handed is the weak link, so when we have probed the number ourselves
+    # it goes in here as a figure the model only has to add up to.
+    length_instruction = (
+        f" The gameplay video is exactly {round(footage_seconds)} seconds long, so your segment"
+        f" durations MUST sum to exactly {round(footage_seconds)}. Count them before you answer."
+        if footage_seconds
+        else ""
+    )
     video_instruction = (
         "4. **VIDEO SYNCHRONIZATION**: You have been provided with the gameplay video file. You MUST analyze the video to identify key events, actions, milestones, combat status, victories, or failures occurring at each timestamp. Your commentary [Streamer Dialogue] and physical reactions [Streamer Action] MUST synchronize directly and logically with these specific gameplay visuals in the video."
+        + length_instruction
         if footage_url
         else ""
     )
@@ -450,7 +486,42 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
             "Please ensure the file was ingested as an artifact or is a valid URL."
         )
 
-    # 2. Build prompt and check research prerequisites
+    # 2. Shrink the footage so it can ride inline, and measure it.
+    #    Raw 1080p gameplay is tens of megabytes of base64 in a single
+    #    generate_content call; compress_video puts it at 720p/2.5Mbps under 30s
+    #    and 540p/1.5Mbps at or over it. Probing the result also yields the one
+    #    number rule 1 of STREAMER_RULES depends on.
+    footage_seconds: float | None = None
+    work_dir = tempfile.mkdtemp(prefix="script_footage_")
+    try:
+        source_path = os.path.join(work_dir, "gameplay-source")
+        with open(source_path, "wb") as f:
+            f.write(video_bytes)
+        try:
+            compressed_path = await compress_video(
+                source_path, os.path.join(work_dir, "gameplay.mp4")
+            )
+            with open(compressed_path, "rb") as f:
+                video_bytes = f.read()
+            mime_type = "video/mp4"
+            footage_seconds = probe_duration(compressed_path)
+            logger.info(
+                "[script] footage %.1fs, %.1fMB inline after compression",
+                footage_seconds or 0.0,
+                len(video_bytes) / 1e6,
+            )
+        except Exception as err:
+            # Not fatal. An unreadable or already-tiny clip still gets sent as
+            # it arrived; it just costs more request and leaves the model to
+            # judge the length on its own, which is what it did before.
+            logger.warning(
+                "[script] could not compress the footage (%s); sending it as-is", err
+            )
+            footage_seconds = probe_duration(source_path)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    # 3. Build prompt and check research prerequisites
     title = script_spec.get("game", "")
     cta = script_spec.get("cta", "")
     device = global_spec.get("gamingDevice", "PC")
@@ -478,9 +549,10 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
         game_url=game_url,
         researched_facts=researched_facts,
         footage_url=footage_target,
+        footage_seconds=footage_seconds,
     )
 
-    # 3. Call Gemini with video part and structured schema
+    # 4. Call Gemini with video part and structured schema
     client = genai.Client()
     contents = [
         types.Part.from_bytes(data=video_bytes, mime_type=mime_type),
@@ -495,6 +567,7 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
                 system_instruction=SCRIPT_SYSTEM_INSTRUCTION,
                 response_mime_type="application/json",
                 response_schema=list[Segment],
+                safety_settings=SAFETY_BLOCK_NONE,
             ),
         )
         raw_text = response.text or "[]"
@@ -508,7 +581,7 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
     clamped = clamp_segments(raw_segments)
     final_segments = compute_timeline(clamped)
 
-    # 4. Save deliverables to state["artifacts"]["script"]
+    # 5. Save deliverables to state["artifacts"]["script"]
     record_artifact(
         state,
         "script",
@@ -521,7 +594,7 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
         },
     )
 
-    # 5. Format return summary & detect downstream impact
+    # 6. Format return summary & detect downstream impact
     total_dur = final_segments[-1]["end_seconds"] if final_segments else 0
     lines_summary = []
     for s in final_segments:
@@ -529,9 +602,35 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
             f'Line {s["id"]} [{s["startTime"]} - {s["endTime"]} ({s["duration"]}s)]: "{s["dialogue"]}"'
         )
 
+    # The script's total is what the finished video will be as long as, so a gap
+    # against the footage is not a detail -- it is how much gameplay ends up with
+    # nobody talking over it, or how much gets cut. Say it rather than let it
+    # surface three stages later as "the video is the wrong length".
+    coverage_note = ""
+    if footage_seconds and abs(total_dur - footage_seconds) >= 2:
+        gap = round(total_dur - footage_seconds, 1)
+        logger.warning(
+            "[script] %ds of script against %.1fs of footage (%+.1fs)",
+            total_dur,
+            footage_seconds,
+            gap,
+        )
+        coverage_note = (
+            f"\n\n⚠️ COVERAGE GAP: the script runs {total_dur}s against "
+            f"{round(footage_seconds)}s of footage ({gap:+.1f}s). The finished video is "
+            f"as long as the script, so "
+            + (
+                "the tail of the gameplay will not be in it."
+                if gap < 0
+                else "the gameplay will run out before the commentary does and its last frame will be held."
+            )
+            + " Tell the creator, and offer to regenerate the script if they want full coverage."
+        )
+
     return (
         f"Successfully generated script with {len(final_segments)} segments (Total: {total_dur}s):\n\n"
         + "\n".join(lines_summary)
+        + coverage_note
         + "\n\n⚠️ MILESTONE GATE: Commentary script deliverable generated. "
         "State explicitly to the Director: Present these commentary lines to the creator and wait until the creator explicitly confirms they are satisfied before proceeding to the next step. "
         "Do NOT trigger video generation in this turn."

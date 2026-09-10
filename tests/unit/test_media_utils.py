@@ -23,6 +23,7 @@ from app.media.clips import (
     get_ffmpeg_exe,
     has_audio_track,
     normalize_clip,
+    probe_duration,
 )
 from app.media.composite import composite_streamer_over_gameplay
 from app.media.stitch import concat_clips
@@ -145,14 +146,19 @@ async def test_composite_pip_and_stacked():
             stacked_placement="top",
         )
         assert os.path.exists(stacked_out)
-        assert round(res_stacked["durationSeconds"]) == 2
+        # 1s streamer over 2s gameplay -> the streamer sets the length.
+        assert round(res_stacked["durationSeconds"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_composite_duration_longest_and_freeze_last_frame():
-    """Verifies that composite total duration is max(streamer, gameplay) and the shorter stream holds its last frame."""
+async def test_composite_runs_exactly_as_long_as_the_streamer_track():
+    """The finished video is the streamer's length in both directions of mismatch.
+
+    Longer footage has its tail dropped; shorter footage holds its last frame.
+    driftSeconds reports the gap either way without changing the length.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Case A: gameplay (3s) > streamer (1s) -> total duration should be 3s
+        # Case A: gameplay (3s) longer than streamer (1s) -> tail dropped, 1s out.
         streamer_1s = os.path.join(tmpdir, "streamer_1s.mp4")
         gameplay_3s = os.path.join(tmpdir, "gameplay_3s.mp4")
         await create_test_video(streamer_1s, duration=1, color="red")
@@ -165,10 +171,11 @@ async def test_composite_duration_longest_and_freeze_last_frame():
             output_path=out_a,
             layout="pip",
         )
-        assert round(res_a["durationSeconds"]) == 3
+        assert round(res_a["durationSeconds"]) == 1
+        assert round(probe_duration(out_a)) == 1
         assert res_a["driftSeconds"] == -2.0
 
-        # Case B: streamer (3s) > gameplay (1s) -> total duration should be 3s
+        # Case B: streamer (3s) longer than gameplay (1s) -> gameplay freezes, 3s out.
         streamer_3s = os.path.join(tmpdir, "streamer_3s.mp4")
         gameplay_1s = os.path.join(tmpdir, "gameplay_1s.mp4")
         await create_test_video(streamer_3s, duration=3, color="red")
@@ -182,6 +189,7 @@ async def test_composite_duration_longest_and_freeze_last_frame():
             layout="pip",
         )
         assert round(res_b["durationSeconds"]) == 3
+        assert round(probe_duration(out_b)) == 3
         assert res_b["driftSeconds"] == 2.0
 
 
