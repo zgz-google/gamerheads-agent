@@ -53,6 +53,8 @@ gcloud services enable \
   logging.googleapis.com \
   cloudtrace.googleapis.com \
   iam.googleapis.com \
+  apphub.googleapis.com \
+  discoveryengine.googleapis.com \
   --project="${PROJECT_ID}" --quiet
 
 echo "===> 2. Setting up Cloud Storage Artifact Bucket..."
