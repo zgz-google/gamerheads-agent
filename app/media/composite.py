@@ -367,7 +367,9 @@ async def composite_streamer_over_gameplay(
         "outputPath": output_path,
         "durationSeconds": round(target_dur, 1),
         "streamerDurationSeconds": round(streamer_dur, 1),
-        "gameplayDurationSeconds": round(gameplay_dur, 1) if gameplay_dur is not None else None,
+        "gameplayDurationSeconds": round(gameplay_dur, 1)
+        if gameplay_dur is not None
+        else None,
         "driftSeconds": drift,
         "gameplayFit": gameplay_fit,
         "gameplayAspect": gameplay_aspect,

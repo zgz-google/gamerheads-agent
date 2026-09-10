@@ -99,4 +99,16 @@ asyncio_default_fixture_loop_scope = "session"
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 
+[tool.agents-cli]
+agent_directory = "app"
+
+[tool.agents-cli.create_params]
+deployment_target = "agent_runtime"
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+
 

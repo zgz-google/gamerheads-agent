@@ -519,14 +519,10 @@ def video_agent_instruction(context: ReadonlyContext) -> str:
     if has_script:
         script_art = artifacts.get("script", {})
         seg_count = (
-            len(script_art.get("segments", []))
-            if isinstance(script_art, dict)
-            else 0
+            len(script_art.get("segments", [])) if isinstance(script_art, dict) else 0
         )
         total_dur = (
-            script_art.get("total_duration", 0)
-            if isinstance(script_art, dict)
-            else 0
+            script_art.get("total_duration", 0) if isinstance(script_art, dict) else 0
         )
         sc_eval = evaluate_stage_status("script", state)
         sc_tag = (
@@ -571,16 +567,8 @@ def video_agent_instruction(context: ReadonlyContext) -> str:
             if sv_eval["status"] == "OUT_OF_SYNC"
             else " (Ready)"
         )
-        dur = (
-            sv_art.get("durationSeconds", 0)
-            if isinstance(sv_art, dict)
-            else 0
-        )
-        segs = (
-            sv_art.get("segmentCount", 0)
-            if isinstance(sv_art, dict)
-            else 0
-        )
+        dur = sv_art.get("durationSeconds", 0) if isinstance(sv_art, dict) else 0
+        segs = sv_art.get("segmentCount", 0) if isinstance(sv_art, dict) else 0
         status_lines.append(
             f"- Streamer Reaction Video: Present ({dur}s, {segs} clips){sv_tag}"
         )
@@ -597,16 +585,8 @@ def video_agent_instruction(context: ReadonlyContext) -> str:
             if comp_eval["status"] == "OUT_OF_SYNC"
             else " (Ready)"
         )
-        dur = (
-            comp_art.get("durationSeconds", 0)
-            if isinstance(comp_art, dict)
-            else 0
-        )
-        lay = (
-            comp_art.get("layout", "pip")
-            if isinstance(comp_art, dict)
-            else "pip"
-        )
+        dur = comp_art.get("durationSeconds", 0) if isinstance(comp_art, dict) else 0
+        lay = comp_art.get("layout", "pip") if isinstance(comp_art, dict) else "pip"
         status_lines.append(
             f"- Final Composite Video: Present ({dur}s, layout: {lay}){comp_tag}"
         )
