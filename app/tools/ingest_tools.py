@@ -44,9 +44,7 @@ def parse_google_drive_download_url(url: str) -> tuple[str, str | None]:
         match = re.search(pattern, url)
         if match:
             file_id = match.group(1)
-            direct_url = (
-                f"https://drive.google.com/uc?export=download&id={file_id}"
-            )
+            direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
             return direct_url, file_id
     return url, None
 
@@ -162,7 +160,9 @@ async def ingest_url_to_artifact(url: str, tool_context: ToolContext) -> str:
                     if confirm_match and file_id:
                         confirm_token = confirm_match.group(1)
                         confirm_url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={confirm_token}"
-                        async with session.get(confirm_url, allow_redirects=True) as conf_resp:
+                        async with session.get(
+                            confirm_url, allow_redirects=True
+                        ) as conf_resp:
                             if conf_resp.status == 200:
                                 response = conf_resp
                             else:
@@ -177,7 +177,7 @@ async def ingest_url_to_artifact(url: str, tool_context: ToolContext) -> str:
                 content_length = response.headers.get("Content-Length")
                 if content_length and int(content_length) > MAX_DOWNLOAD_SIZE_BYTES:
                     limit_mb = MAX_DOWNLOAD_SIZE_BYTES / (1024 * 1024)
-                    return f"Error: File size ({int(content_length)/(1024*1024):.1f}MB) exceeds maximum limit of {limit_mb:.0f}MB."
+                    return f"Error: File size ({int(content_length) / (1024 * 1024):.1f}MB) exceeds maximum limit of {limit_mb:.0f}MB."
 
                 chunks = []
                 total_bytes = 0

@@ -33,8 +33,7 @@ def test_parse_google_drive_download_url():
     direct1, file_id1 = parse_google_drive_download_url(url1)
     assert file_id1 == "1A2B3C4D5E6F7G8H9I0J"
     assert (
-        direct1
-        == "https://drive.google.com/uc?export=download&id=1A2B3C4D5E6F7G8H9I0J"
+        direct1 == "https://drive.google.com/uc?export=download&id=1A2B3C4D5E6F7G8H9I0J"
     )
 
     # Test open?id= link
@@ -42,8 +41,7 @@ def test_parse_google_drive_download_url():
     direct2, file_id2 = parse_google_drive_download_url(url2)
     assert file_id2 == "my_special_file_123"
     assert (
-        direct2
-        == "https://drive.google.com/uc?export=download&id=my_special_file_123"
+        direct2 == "https://drive.google.com/uc?export=download&id=my_special_file_123"
     )
 
     # Test non-drive URL
@@ -152,28 +150,81 @@ async def test_update_spec():
     mock_context = MagicMock(spec=ToolContext)
     mock_context.state = {}
 
-    # Initial spec update with footage
+    # Initial spec update with footage (no artifacts yet)
     result = await update_spec(
         footageUrl="gameplay_01.mp4",
         game="Black Myth: Wukong",
         tool_context=mock_context,
     )
     assert "Spec updated successfully" in result
+    assert "Downstream Impact Detected" not in result
     assert mock_context.state["spec"]["footageUrl"] == "gameplay_01.mp4"
     assert mock_context.state["spec"]["game"] == "Black Myth: Wukong"
-    assert mock_context.state["script_state"] == "stale"
-    assert mock_context.state["streamer_video_state"] == "stale"
+    assert "script_state" not in mock_context.state
+    assert "streamer_video_state" not in mock_context.state
 
-    # Subsequent update with avatar reference image
+    # Subsequent update with avatar reference image (still no artifacts)
     result2 = await update_spec(
         referenceImageUrl="cyber_avatar.png",
         appearance="cyberpunk girl with blue hair",
         tool_context=mock_context,
     )
     assert "Spec updated successfully" in result2
+    assert "Downstream Impact Detected" not in result2
     assert mock_context.state["spec"]["referenceImageUrl"] == "cyber_avatar.png"
-    assert (
-        mock_context.state["spec"]["appearance"]
-        == "cyberpunk girl with blue hair"
+    assert mock_context.state["spec"]["appearance"] == "cyberpunk girl with blue hair"
+    assert "avatar_state" not in mock_context.state
+
+
+@pytest.mark.asyncio
+async def test_update_spec_triggers_downstream_impact():
+    mock_context = MagicMock(spec=ToolContext)
+    # Existing artifacts in state
+    mock_context.state = {
+        "spec": {
+            "footageUrl": "old_footage.mp4",
+            "appearance": "cyberpunk girl",
+        },
+        "artifacts": {
+            "script": [{"id": 1, "dialogue": "Let's go!"}],
+            "avatar": {"image": "avatar.png"},
+            "streamer_video": {"url": "video.mp4"},
+        },
+    }
+
+    # 1. Changing footageUrl should impact script and streamer_video, but NOT avatar
+    result = await update_spec(
+        footageUrl="new_footage.mp4",
+        tool_context=mock_context,
     )
-    assert mock_context.state["avatar_state"] == "stale"
+    assert "Spec updated successfully" in result
+    assert "⚠️ Downstream Impact Detected" in result
+    assert "- [script]" in result
+    assert "- [streamer_video]" in result
+    assert "- [avatar]" not in result
+
+    # 2. Changing appearance should impact avatar and streamer_video, but NOT script
+    result2 = await update_spec(
+        appearance="retro pixel hero",
+        tool_context=mock_context,
+    )
+    assert "Spec updated successfully" in result2
+    assert "⚠️ Downstream Impact Detected" in result2
+    assert "- [avatar]" in result2
+    assert "- [streamer_video]" in result2
+    assert "- [script]" not in result2
+
+    # 3. Changing additionalInstructions should impact script, but NOT avatar
+    result3 = await update_spec(
+        additionalInstructions="Make it hyper sarcastic and funny",
+        tool_context=mock_context,
+    )
+    assert "Spec updated successfully" in result3
+    assert "⚠️ Downstream Impact Detected" in result3
+    assert "- [script]" in result3
+    assert "- [avatar]" not in result3
+    assert (
+        mock_context.state["config"]["script"]["additionalInstructions"]
+        == "Make it hyper sarcastic and funny"
+    )
+    assert "additionalInstructions" not in mock_context.state["config"]["global"]

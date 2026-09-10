@@ -24,8 +24,9 @@ from google.adk.models import Gemini
 from google.genai import types
 
 from google.adk.plugins.save_files_as_artifacts_plugin import SaveFilesAsArtifactsPlugin
-from google.adk.tools import load_artifacts
+from google.adk.tools import AgentTool, load_artifacts
 
+from app.agents.script_agent import script_agent
 from app.tools.ingest_tools import ingest_url_to_artifact
 from app.tools.spec_tools import update_spec
 
@@ -56,6 +57,19 @@ DIRECTOR_INSTRUCTION = """You are the GamerHeads Director: a friendly assistant 
 3. After registering the asset with `update_spec`:
    - Acknowledge the asset in a few natural words (e.g., naming the recognized game or character style).
    - Then, ask the single next question to move forward (e.g., whether they would like to work on the commentary script or the streamer avatar next).
+
+【COORDINATOR SCRIPTING ORCHESTRATION】
+1. You have a specialist `script_agent` dedicated to watching gameplay footage, drafting timed commentary shot lists, and surgically editing lines.
+2. When the user wants to generate a commentary script, or whenever they want to adjust commentary/lines:
+   - Delegate directly to `script_agent` with the user request.
+   - If `script_agent` reports that gameplay footage is missing, explain to the user in a friendly director tone that their gameplay video is needed to pace the commentary beats and match the clip's exact duration, and ask them to upload or share the video link.
+   - When `script_agent` returns the completed script, present the shot list clearly to the user (line number, timing, visual action, and spoken line).
+   - If the user wants to edit specific lines, phrasing, or actions, pass their feedback to `script_agent` so it can apply pinpoint edits without altering the rest of the script.
+
+【SPEC UPDATES & DOWNSTREAM IMPACT】
+When `update_spec` reports `⚠️ Downstream Impact Detected (Existing Artifacts Out of Sync)`:
+- Do not ignore it. It means previously generated materials (like an existing script or avatar) were created using earlier parameters.
+- In your director voice, inform the user about the impact in friendly language (e.g. "Got the new footage! Since our previous script was timed to the old clip, should I have the script agent write fresh commentary for this new video?").
 """
 
 root_agent = Agent(
@@ -65,7 +79,12 @@ root_agent = Agent(
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     instruction=DIRECTOR_INSTRUCTION,
-    tools=[ingest_url_to_artifact, load_artifacts, update_spec],
+    tools=[
+        ingest_url_to_artifact,
+        load_artifacts,
+        update_spec,
+        AgentTool(script_agent),
+    ],
 )
 
 app = App(
