@@ -1,0 +1,31 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "greeting",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Hello, what can you help me with?"}]
+      }
+    },
+    {
+      "eval_case_id": "video_generation",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Please create a vertical video clip titled 'Championship Final' with a gaming theme."}]
+      }
+    },
+    {
+      "eval_case_id": "capabilities_query",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "What video formats and themes do you support for generating clips?"}]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [{"text": "I generate 9:16 vertical (720x1280) and 16:9 landscape MP4 videos with themes including gaming, cyberpunk, minimal, and sunset."}]
+        }
+      }
+    }
+  ]
+}

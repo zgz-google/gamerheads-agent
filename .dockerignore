@@ -1,0 +1,7 @@
+.venv/
+.pytest_cache/
+.google-agents-cli/
+outputs/
+__pycache__/
+*.pyc
+.git/
