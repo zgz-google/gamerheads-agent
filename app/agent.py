@@ -155,16 +155,16 @@ def director_instruction(context: ReadonlyContext) -> str:
     gaming_device = global_spec.get("gamingDevice", "PC")
     aspect_ratio = global_spec.get("aspectRatio", "16:9")
 
-    global_spec_lines = [
-        "【CURRENT GLOBAL SPEC (OWNED BY COORDINATOR)】",
-        f"- Gameplay Footage (footageUrl): {footage_url or 'None (Not provided yet)'}",
-        f"- Gaming Platform (gamingDevice): {gaming_device}",
-        f"- Video Aspect Ratio (aspectRatio): {aspect_ratio}",
+    project_settings_lines = [
+        "【CURRENT PROJECT SETTINGS】",
+        f"- Gameplay Footage: {footage_url or 'None - Not provided yet'}",
+        f"- Gaming Platform: {gaming_device}",
+        f"- Video Aspect Ratio: {aspect_ratio}",
     ]
 
     kanban = render_pipeline_kanban(state)
 
-    return f"{DIRECTOR_INSTRUCTION}\n\n{chr(10).join(global_spec_lines)}\n\n{kanban}"
+    return f"{DIRECTOR_INSTRUCTION}\n\n{chr(10).join(project_settings_lines)}\n\n{kanban}"
 
 
 root_agent = Agent(

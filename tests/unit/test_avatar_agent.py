@@ -352,8 +352,5 @@ async def test_avatar_regeneration_triggers_downstream_out_of_sync():
     assert mock_ctx.state["artifacts"]["avatar"]["_updated_at"] > 100.0
 
     # Downstream Stage 3 status in pipeline
-    stage3_status = evaluate_stage_status("streamer_video", mock_ctx.state)
-    assert stage3_status["status"] == "OUT_OF_SYNC"
     kanban = render_pipeline_kanban(mock_ctx.state)
     assert "[Streamer Video]: ⚠️ OUT_OF_SYNC" in kanban
-    assert "OUT OF SYNC" in kanban

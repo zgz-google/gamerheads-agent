@@ -180,7 +180,6 @@ async def test_edit_script_lines_triggers_downstream_impact():
     assert stage3_status["status"] == "OUT_OF_SYNC"
     kanban = render_pipeline_kanban(mock_ctx.state)
     assert "[Streamer Video]: ⚠️ OUT_OF_SYNC" in kanban
-    assert "OUT OF SYNC" in kanban
 
 
 @pytest.mark.asyncio

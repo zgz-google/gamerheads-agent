@@ -160,8 +160,6 @@ def test_render_pipeline_kanban():
     assert "PRODUCTION PIPELINE REAL-TIME KANBAN" in kanban
     assert "[Commentary Script]: ✅ READY" in kanban
     assert "[Streamer Video]: ⚠️ OUT_OF_SYNC" in kanban
-    assert "ACTIVE DIRECTOR FOCUS" in kanban
-    assert "OUT OF SYNC" in kanban
 
 
 @pytest.mark.asyncio
@@ -244,10 +242,10 @@ def test_director_instruction_dynamic_injection():
     }
 
     instruction = director_instruction(mock_ctx)
-    assert "【CURRENT GLOBAL SPEC (OWNED BY COORDINATOR)】" in instruction
-    assert "Gameplay Footage (footageUrl): gameplay_epic.mp4" in instruction
-    assert "Gaming Platform (gamingDevice): Console" in instruction
-    assert "Video Aspect Ratio (aspectRatio): 9:16" in instruction
+    assert "【CURRENT PROJECT SETTINGS】" in instruction
+    assert "Gameplay Footage: gameplay_epic.mp4" in instruction
+    assert "Gaming Platform: Console" in instruction
+    assert "Video Aspect Ratio: 9:16" in instruction
     assert "【PRODUCTION PIPELINE REAL-TIME KANBAN】" in instruction
     assert "[Commentary Script]: ✅ READY" in instruction
     assert "Deliverable: 1 commentary segments (5s total)" in instruction
@@ -291,8 +289,3 @@ def test_director_instruction_out_of_sync_alignment():
     # Deliverable directly under the Stage card flags Stale
     assert "Deliverable (⚠️ Stale - Out of sync): old_avatar.png" in instruction
     assert "Room Setting: old loft" in instruction
-    # Active focus alerts the director
-    assert (
-        "ACTIVE DIRECTOR FOCUS: Downstream deliverables (Streamer Avatar) are OUT OF SYNC with upstream changes!"
-        in instruction
-    )
