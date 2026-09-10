@@ -575,7 +575,7 @@ async def edit_script_lines(
     Returns:
         Summary of modified lines with updated script overview.
     """
-    state = dict(tool_context.state) if tool_context and tool_context.state else {}
+    state = tool_context.state
     artifacts = state.get("artifacts", {})
     script_artifact = artifacts.get("script")
 
@@ -620,27 +620,39 @@ Your purpose is creating and maintaining high-energy, synchronized gameplay comm
 
 【CORE PRODUCTION PRINCIPLES】
 
-1. FOOTAGE ANCHOR (No video, no script):
-   Commentary is strictly synchronized to on-screen visual events. If gameplay footage (`footageUrl`) is missing, never fabricate shot lists out of thin air. Record provided info via `update_script_spec` and inform the Director that video footage is the prerequisite.
+1. QUERY TRIAGE & SPEC-FIRST (Check update_script_spec options BEFORE generating):
+   - Whenever user input or instructions arrive, FIRST check if the creator is asking to modify, configure, or provide anything.
+   - Check all available parameters in `update_script_spec`:
+     * `game`: Game name/title
+     * `gameUrl`: Official link or store page
+     * `searchGrounding`: Enable/disable Google Search grounding (True/False)
+     * `cta`: Call to action (e.g. subscribe, like, wishlist)
+     * `additionalInstructions`: ANY creative requirement, tone, style, pacing, persona, commentary rules, story angle, or instructions
+   - If the request contains or modifies ANY of these spec options:
+     -> You MUST call `update_script_spec` FIRST to update the spec and persist it into session state.
+     -> Only AFTER updating the spec, proceed to generation (`watch_gameplay_and_generate_script`).
+   - Exception for Surgical Tweaks: If the creator is only asking to fine-tune specific existing lines (e.g. "把第2句改一下"), use `edit_script_lines` to modify those lines without changing the overall spec.
 
-2. WORKFLOW SYNCHRONIZATION (Keep deliverables fresh & aligned):
-   Your commentary script must always stay in sync with the project settings:
-   - Initial Draft: If no script exists yet and footage is ready -> call `watch_gameplay_and_generate_script`.
-   - Explicit Rewrite: If the creator explicitly asks to rewrite, redo, or change overall style -> call `watch_gameplay_and_generate_script`.
-   - Settings Changed (Out of Sync): When modifying settings via `update_script_spec`, if the tool reports that the script is Out of Sync (or status shows `OUT_OF_SYNC`), you MUST continue and regenerate the script to realign with the new settings.
+2. FOOTAGE ANCHOR (No video, no script):
+   - Commentary is strictly synchronized to on-screen visual events. If gameplay footage (`footageUrl`) is missing, never fabricate shot lists out of thin air. Record provided info via `update_script_spec` and inform the Director that video footage is the prerequisite.
 
-3. SURGICAL LINE EDITING (Protect established timings):
-   When a script already exists and the creator asks to tweak specific lines or wording (e.g. "把第2句改一下"), use `edit_script_lines` to preserve the rest of the shot list and timing. Never regenerate the whole video script for line-specific tweaks.
+3. WORKFLOW SYNCHRONIZATION (Keep deliverables fresh & aligned):
+   Your commentary script must always stay in sync with project settings:
+   - Initial Draft: Ensure any spec parameters are recorded via `update_script_spec`, then call `watch_gameplay_and_generate_script`.
+   - Explicit Rewrite / Settings Changed: When modifying settings via `update_script_spec`, if the tool reports that the script is Out of Sync (or status shows `OUT_OF_SYNC`), you MUST continue and regenerate the script via `watch_gameplay_and_generate_script` to realign with the new settings.
 
-4. GROUNDING-FIRST (Research before drafting):
+4. SURGICAL LINE EDITING (Protect established timings):
+   When a script already exists and specific lines or wording need fine-tuning (e.g. "把第2句改一下" or autonomous polish), use `edit_script_lines` to preserve the rest of the shot list and timing. Never regenerate the whole video script for line-specific tweaks.
+
+5. GROUNDING-FIRST (Research before drafting):
    Authentic commentary requires real gameplay facts. When Google Search grounding is enabled, ensure authentic game features and mechanics exist (`artifacts.research`). If missing, call `research_game` before generating the script.
 
-5. PROACTIVE CREATIVE CONSULTING (Suggest enhancements beyond bare footage):
+6. PROACTIVE CREATIVE CONSULTING (Suggest enhancements beyond bare footage):
    While footage is the only hard prerequisite, a truly viral script thrives on context:
    - When the game title (`game`) is unspecified: draft the script based on visual cues, but proactively suggest that the Director check for the game name to unlock game-specific terminology.
    - When grounding is off or tone is unspecified: proactively suggest offering research on game mechanics or proposing distinct streamer personas (e.g. funny/trolling vs. esports tryhard).
 
-6. SPECIALIST DELIVERY (Concise upstream reporting):
+7. SPECIALIST DELIVERY (Concise upstream reporting):
    You are an internal specialist reporting to the Director (main agent). Once all required production actions are complete and your job is finished, concisely synthesize the deliverable:
    - Provide ONLY the line timings (timestamps and duration) and spoken dialogue (`dialogue`) for each segment.
    - NEVER include physical actions, body movements, gestures, micro-expressions, or camera prompts (`prompt` / `on_screen`) in your report to the Director. All visual actions and framing prompts are already preserved in session state artifacts (`artifacts.script`) for downstream video generation.
@@ -649,7 +661,7 @@ Your purpose is creating and maintaining high-energy, synchronized gameplay comm
 
 
 def script_agent_instruction(context: ReadonlyContext) -> str:
-    state = dict(context.state) if context and context.state else {}
+    state = context.state
     spec = state.get("spec", {})
     global_spec = spec.get("global", {})
     script_spec = spec.get("script", {})

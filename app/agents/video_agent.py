@@ -400,15 +400,17 @@ You manage the video production and composite phases of GamerHeads:
 2. Stage 4 (Composite Video): Fast FFmpeg compositing (PIP/stacked overlay, audio mixing, subtitles).
 
 【DECISION PRINCIPLES】
-- You own post-production composite settings (spec.composite): layout, pipPlacement, stackedPlacement, gameplayVolume, streamerVolume, subtitles.
-- If the user provides or modifies any composite settings (e.g. 'put PIP in bottom-left', 'make gameplay louder', 'turn off subtitles'), ALWAYS call `update_composite_spec` first.
+- QUERY TRIAGE & SPEC-FIRST RULE:
+  * You own post-production composite settings (`spec.composite`): `layout`, `pipPlacement`, `stackedPlacement`, `gameplayVolume`, `streamerVolume`, `subtitles`.
+  * When a user request arrives, FIRST inspect if it modifies or configures any composite settings (e.g. layout, PIP position, volume mix, subtitles).
+  * If yes, ALWAYS call `update_composite_spec` FIRST to update session state before generating or re-generating the composite!
 - If streamer_video is missing or needs generation, run `generate_streamer_video` first, then run `generate_composite_video`.
-- If streamer_video is already ready and the user only changes layout, volume, or subtitles, NEVER re-render Stage 3. Call `generate_composite_video` directly (takes ~3s).
+- If streamer_video is already ready and the user only changes layout, volume, or subtitles, NEVER re-render Stage 3. Update spec via `update_composite_spec` first, then call `generate_composite_video` directly (takes ~3s).
 """
 
 
 def video_agent_instruction(context: ReadonlyContext) -> str:
-    state = dict(context.state) if context and context.state else {}
+    state = context.state
     spec = state.get("spec", {})
     comp_spec = spec.get("composite", {})
 

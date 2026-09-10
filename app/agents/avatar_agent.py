@@ -354,21 +354,24 @@ Your sole purpose is creating and refining the streamer's "Golden Anchor" portra
   -> Then inform the Director that streamer appearance or a reference image is required, so the Director can ask the user.
 
 【TOOL USAGE & EXECUTION POLICY】
-1. `update_avatar_spec`: Call to record or update `appearance`, `referenceImageUrl`, and/or `setting` in session state.
-2. `generate_golden_anchor_avatar`: Call to generate or re-generate the Golden Anchor portrait.
-3. Decision Workflow:
-   - When the user provides or tweaks an avatar setting (e.g. "背景换成赛博朋克风", "形象改成穿白衬衫的少年"):
-     a) Call `update_avatar_spec(...)` with the new/updated values.
-     b) If an avatar deliverable ALREADY exists in session state (Direct Modification intent) OR if the user explicitly asked to generate/draw the avatar:
-        Immediately call `generate_golden_anchor_avatar` to re-generate the portrait matching the new setting!
-     c) If NO avatar deliverable exists yet and the user was only specifying/exploring concepts without asking to draw:
+1. QUERY TRIAGE & SPEC-FIRST RULE:
+   - When a creator query arrives, FIRST check whether they are asking to modify, configure, or provide anything.
+   - Inspect all available parameters in `update_avatar_spec`:
+     * `appearance`: Visual description of the streamer (clothing, hair, style, persona)
+     * `referenceImageUrl`: Artifact name or URL of a visual likeness reference image
+     * `setting`: Streamer room or background environment
+   - If the request contains or modifies ANY of these spec options:
+     -> You MUST call `update_avatar_spec(...)` FIRST to persist them into session state before doing anything else.
+     -> If an avatar deliverable ALREADY exists in session state (Direct Modification intent) OR if the user explicitly asked to generate/draw the avatar:
+        Immediately call `generate_golden_anchor_avatar` to re-generate the portrait matching the updated spec!
+     -> If NO avatar deliverable exists yet and the user was only exploring concepts without asking to draw:
         Do NOT generate yet; confirm the updated setting back to the Director.
    - After generation, provide a clear, enthusiastic summary of the avatar's visual style, background, and platform setup back to the Director.
 """
 
 
 def avatar_agent_instruction(context: ReadonlyContext) -> str:
-    state = dict(context.state) if context and context.state else {}
+    state = context.state
     spec = state.get("spec", {})
     global_spec = spec.get("global", {})
     avatar_spec = spec.get("avatar", {})

@@ -18,6 +18,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from google.adk.sessions.state import State
 from google.adk.tools import ToolContext
 from google.genai import types
 
@@ -145,6 +146,22 @@ async def test_edit_script_lines_success():
     assert saved_segs[1]["dialogue"] == "[Laughing] What an insane clutch!"
     assert saved_segs[1]["prompt"] == "frown"  # Untouched
     assert saved_segs[0]["duration"] == 4  # Duration preserved
+
+
+@pytest.mark.asyncio
+async def test_edit_script_lines_with_adk_state_object():
+    """Tests that edit_script_lines works directly on ADK State without raising KeyError: 0."""
+    mock_ctx = MagicMock(spec=ToolContext)
+    initial_segments = [
+        {"id": 1, "duration": 5, "startTime": "00:00", "endTime": "00:05", "dialogue": "Original"}
+    ]
+    mock_ctx.state = State({"artifacts": {"script": {"segments": initial_segments, "total_duration": 5}}}, {})
+
+    edits = [LineEditItem(line=1, dialogue="Updated via ADK State")]
+    res = await edit_script_lines(edits, mock_ctx)
+    assert "Successfully updated line(s) [1]" in res
+    assert "Updated via ADK State" in res
+    assert mock_ctx.state.get("artifacts")["script"]["segments"][0]["dialogue"] == "Updated via ADK State"
 
 
 @pytest.mark.asyncio

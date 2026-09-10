@@ -24,10 +24,13 @@ import uuid
 from typing import Any
 
 import aiohttp
+from dotenv import load_dotenv
 
 from app.media.clips import get_ffmpeg_exe
 
-OMNI_MODEL = os.getenv("OMNI_MODEL", "gemini-2.0-flash-exp")
+load_dotenv()
+
+OMNI_MODEL = os.getenv("OMNI_MODEL", "gemini-omni-1.1-flash-preview")
 MAX_ATTEMPTS = 3
 ATTEMPT_TIMEOUT_SECONDS = 180
 
@@ -179,9 +182,11 @@ async def omni_interaction(
         creds.refresh(auth_req)
         url = f"https://aiplatform.googleapis.com/v1beta1/projects/{project}/locations/global/interactions"
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {creds.token}"}
+        if project:
+            headers["X-Goog-User-Project"] = project
 
     body = {
-        "model": OMNI_MODEL,
+        "model": os.getenv("OMNI_MODEL", OMNI_MODEL),
         "input": [
             {"type": "text", "text": prompt},
             {"type": "image", "mime_type": mime_type, "data": clean_img},
