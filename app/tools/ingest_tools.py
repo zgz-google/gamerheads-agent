@@ -111,11 +111,14 @@ def determine_filename_and_mime(
 async def ingest_url_to_artifact(url: str, tool_context: ToolContext) -> str:
     """Downloads an external media file (HTTP/HTTPS or Google Drive) and saves it to the session Artifact Store.
 
-    Call this tool whenever the user provides a video link, an image link, or a Google Drive link.
-    After this tool successfully saves the artifact, use `load_artifacts` to inspect it or `update_spec` to register its role.
+    CRITICAL USAGE RULES:
+    - ONLY call this tool if the user explicitly provided a real URL or Google Drive link in their message.
+    - NEVER invent, guess, or hallucinate URLs (e.g. placeholder domains, dummy URLs, or fake Google Drive IDs).
+    - If the user asks you to look at, review, or evaluate an image or video but did not provide a URL or file, DO NOT call this tool; ask the user to provide the link or upload the file.
+    - After this tool successfully saves the artifact, use `load_artifacts` to inspect it or `update_spec` to register its role.
 
     Args:
-        url: The external URL or Google Drive link provided by the user.
+        url: The actual external URL or Google Drive link explicitly provided by the user. Do NOT invent or pass a hallucinated URL.
 
     Returns:
         A status string detailing the saved artifact name, MIME type, and size in megabytes.
