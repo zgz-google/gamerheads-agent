@@ -39,6 +39,7 @@ __all__ = [
     "PIPELINE_STAGES",
     "detect_impact",
     "update_avatar_spec",
+    "update_composite_spec",
     "update_global_spec",
     "update_script_spec",
 ]
@@ -201,5 +202,46 @@ async def update_script_spec(
         "additionalInstructions": additionalInstructions,
         "gameUrl": gameUrl,
         "searchGrounding": searchGrounding,
+    }
+    return _apply_spec_updates(incoming, tool_context)
+
+
+async def update_composite_spec(
+    layout: str | None = None,
+    pipPlacement: str | None = None,
+    stackedPlacement: str | None = None,
+    gameplayVolume: float | None = None,
+    streamerVolume: float | None = None,
+    subtitles: bool | None = None,
+    tool_context: ToolContext | None = None,
+) -> str:
+    """Updates composite layout, audio volume mixing, and subtitle settings in session state.
+
+    Used by VideoAgent to register or adjust post-production composite settings:
+    - layout: 'pip' (picture-in-picture), 'stacked' (split screen), or 'streamer-only'.
+    - pipPlacement: 'bottom-right', 'bottom-left', 'top-right', or 'top-left'.
+    - stackedPlacement: 'top', 'bottom', 'left', or 'right'.
+    - gameplayVolume: Volume multiplier for gameplay audio (e.g. 0.8).
+    - streamerVolume: Volume multiplier for streamer voice (e.g. 1.0).
+    - subtitles: Whether styled subtitles are burned into the final video.
+
+    Args:
+        layout: Video layout composition style.
+        pipPlacement: Corner position for PIP streamer window.
+        stackedPlacement: Alignment for stacked split screen.
+        gameplayVolume: Gameplay background audio volume.
+        streamerVolume: Streamer commentary audio volume.
+        subtitles: Enable/disable burned-in subtitles.
+
+    Returns:
+        Confirmation message detailing updated composite keys and downstream impact.
+    """
+    incoming = {
+        "layout": layout,
+        "pipPlacement": pipPlacement,
+        "stackedPlacement": stackedPlacement,
+        "gameplayVolume": gameplayVolume,
+        "streamerVolume": streamerVolume,
+        "subtitles": subtitles,
     }
     return _apply_spec_updates(incoming, tool_context)

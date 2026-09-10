@@ -16,5 +16,6 @@
 
 from app.agents.avatar_agent import avatar_agent
 from app.agents.script_agent import script_agent
+from app.agents.video_agent import video_agent
 
-__all__ = ["avatar_agent", "script_agent"]
+__all__ = ["avatar_agent", "script_agent", "video_agent"]

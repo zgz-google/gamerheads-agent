@@ -17,6 +17,7 @@
 from app.tools.ingest_tools import ingest_url_to_artifact
 from app.tools.spec_tools import (
     update_avatar_spec,
+    update_composite_spec,
     update_global_spec,
     update_script_spec,
 )
@@ -24,6 +25,7 @@ from app.tools.spec_tools import (
 __all__ = [
     "ingest_url_to_artifact",
     "update_avatar_spec",
+    "update_composite_spec",
     "update_global_spec",
     "update_script_spec",
 ]

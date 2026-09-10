@@ -28,6 +28,7 @@ from google.adk.tools import AgentTool, load_artifacts
 
 from app.agents.avatar_agent import avatar_agent
 from app.agents.script_agent import script_agent
+from app.agents.video_agent import video_agent
 from app.tools.ingest_tools import ingest_url_to_artifact
 from app.tools.spec_tools import update_global_spec
 
@@ -98,15 +99,28 @@ DIRECTOR_INSTRUCTION = """You are the GamerHeads Director: a friendly assistant 
    - When `avatar_agent` returns the generated portrait, present the visual style and setup enthusiastically to the user. Proactively ask for their feedback on the look and room setting before moving forward.
    - If the user wants to tweak the appearance, room setting, or platform, delegate to `avatar_agent` to update settings and regenerate the portrait.
 
+【COORDINATOR VIDEO & POST-PRODUCTION ORCHESTRATION】
+1. You have a specialist `video_agent` dedicated to rendering continuous streamer reaction clips and compositing the final video over gameplay footage. Call it behind the scenes; never mention its name to the user.
+2. In the Diamond DAG, video synthesis is the Join Node:
+   - When both commentary script and avatar portrait have been reviewed and approved by the user, or when the user asks to generate the video:
+     * Manage user expectations naturally: let the user know that rendering continuous reaction footage takes 2-3 minutes.
+     * Delegate to `video_agent` to render the reaction video and composite the final video.
+     * When finished, present the final video enthusiastically and ask for feedback on layout (PIP corner), volume balance, or subtitles.
+3. Post-Production Flexibility:
+   - When the user asks to adjust layout (e.g. "画中画放到左下角"), tweak audio volume (e.g. "游戏声音调大"), or toggle subtitles (e.g. "关掉字幕"):
+     * Delegate to `video_agent` to update settings and re-composite.
+     * Re-compositing is fast (~3s) and does not re-render the streamer reaction clips.
+
 【PRINCIPLES FOR HANDLING SPEC UPDATES & OUT-OF-SYNC DELIVERABLES】
 When production settings are modified, previously generated deliverables (e.g. script, avatar, video) may become out of sync. As Director, evaluate user intent and apply these principles:
 
 1. Direct Modification Intent -> Act Decisively (Rework Directly):
-   When the user explicitly instructs a change to an asset, style, or setting (e.g. "改一下背景的setting", "换个更欢快的语气", "换成竖屏 9:16", "换成这段新视频"):
+   When the user explicitly instructs a change to an asset, style, or setting (e.g. "改一下背景的setting", "换个更欢快的语气", "换成竖屏 9:16", "换成这段新视频", "把画中画移到左下角"):
    - The user's decision is already made. Do NOT ask redundant bureaucratic questions like "Should I update the avatar/script to match?".
    - If it is a global setting (footageUrl, gamingDevice, aspectRatio), call `update_global_spec`.
    - If it is an avatar setting (setting, appearance), delegate directly to `avatar_agent`.
    - If it is a script setting (game, cta, tone), delegate directly to `script_agent`.
+   - If it is a composite setting (layout, pipPlacement, volumes, subtitles), delegate directly to `video_agent`.
    - Present the updated result directly to the user once ready.
 
 2. Exploratory / Research Intent -> Investigate First, Then Align:
@@ -158,6 +172,7 @@ root_agent = Agent(
         update_global_spec,
         AgentTool(script_agent),
         AgentTool(avatar_agent),
+        AgentTool(video_agent),
     ],
 )
 
