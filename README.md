@@ -1,89 +1,89 @@
-# GamerHeads 游戏反应视频导演 (GamerHeads Gameplay Reaction Director)
+# GamerHeads Gameplay Reaction Director
 
-专为游戏创作者打造的 AIGC 创意导演 Agent。基于 **Google ADK (Agent Development Kit)** 与 **agents-cli** 构建，能够将玩家上传的实机游戏录屏全自动转化为包含**个性化虚拟主播出镜、解说配音、表情口型同步以及画中画（PIP）/ 分屏合成**的高品质游戏反应视频。
-
----
-
-## 目录
-
-- [🚀 一键部署指南 (deploy.sh)](#-一键部署指南-deploysh)
-  - [快速一键部署](#快速一键部署)
-  - [前置要求](#前置要求)
-  - [脚本语法与参数说明](#脚本语法与参数说明)
-  - [自动化执行流程](#自动化执行流程)
-  - [常见部署示例](#常见部署示例)
-  - [云端资源清理 (setup.sh)](#云端资源清理-setupsh)
-- [🌟 核心特性](#-核心特性)
-- [📐 系统架构与工作流 (Diamond DAG)](#-系统架构与工作流-diamond-dag)
-- [💻 本地开发与快速上手](#-本地开发与快速上手)
-- [📁 项目目录结构](#-项目目录结构)
-- [📋 常用命令速查表](#-常用命令速查表)
-- [📡 可观测性与 A2A 协议支持](#-可观测性与-a2a-协议支持)
+An AIGC creative director agent built with **Google ADK (Agent Development Kit)** and **`agents-cli`**. It automatically transforms raw gameplay footage into polished streamer reaction videos complete with **custom streamer likenesses, commentary scripts, lip-synced reaction synthesis, and picture-in-picture (PIP) / split-screen post-production**.
 
 ---
 
-## 🚀 一键部署指南 (`deploy.sh`)
+## Table of Contents
 
-项目提供了生产就绪的一键部署脚本 [`deploy.sh`](file:///Users/zgz/gamerheads-agent/deploy.sh)，旨在将 GamerHeads Agent 全自动部署至 **Google Cloud Vertex AI Agent Runtime (Reasoning Engine)**，并支持无缝注册挂载至 **Gemini Enterprise**。
+- [🚀 One-Click Deployment Guide (`deploy.sh`)](#-one-click-deployment-guide-deploysh)
+  - [Quick Deploy](#quick-deploy)
+  - [Prerequisites](#prerequisites)
+  - [Syntax & Parameters](#syntax--parameters)
+  - [Automated Workflow](#automated-workflow)
+  - [Deployment Scenarios](#deployment-scenarios)
+  - [Cloud Resource Teardown (`setup.sh`)](#cloud-resource-teardown-setupsh)
+- [🌟 Core Features](#-core-features)
+- [📐 System Architecture & Workflow (Diamond DAG)](#-system-architecture--workflow-diamond-dag)
+- [💻 Local Development & Quick Start](#-local-development--quick-start)
+- [📁 Project Directory Structure](#-project-directory-structure)
+- [📋 CLI Reference Cheat Sheet](#-cli-reference-cheat-sheet)
+- [📡 Observability & A2A Protocol Support](#-observability--a2a-protocol-support)
 
-### 快速一键部署
+---
 
-仅需一行命令即可完成从 IAM 授权、云资源准备、依赖打包、Vertex AI Reasoning Engine 部署到存活验证的全流程：
+## 🚀 One-Click Deployment Guide (`deploy.sh`)
+
+The repository provides a production-ready one-click deployment script, [`deploy.sh`](file:///Users/zgz/gamerheads-agent/deploy.sh), which fully automates deploying the GamerHeads Director to **Google Cloud Vertex AI Agent Runtime (Reasoning Engine)**, with optional seamless registration to **Gemini Enterprise**.
+
+### Quick Deploy
+
+A single command handles service account provisioning, IAM role binding, cloud resource setup, dependency packaging, Vertex AI deployment, and live health verification:
 
 ```bash
-# 部署至 Vertex AI (默认 us-central1)
+# Deploy to Vertex AI Agent Runtime (default region: us-central1)
 bash deploy.sh <YOUR_PROJECT_ID>
 
-# 或部署并一键注册至 Gemini Enterprise
+# Deploy and register directly to Gemini Enterprise
 bash deploy.sh <YOUR_PROJECT_ID> us-central1 --ge <YOUR_GE_APP_ID>
 ```
 
 ---
 
-### 前置要求
+### Prerequisites
 
-执行部署前，请确保本地已准备好以下工具与环境：
+Before deploying, ensure you have set up the following:
 
-1. **Google Cloud SDK (`gcloud`)**：已安装并完成登录认证 - [安装指引](https://cloud.google.com/sdk/docs/install)
+1. **Google Cloud SDK (`gcloud`)**: Installed and authenticated - [Installation Guide](https://cloud.google.com/sdk/docs/install)
    ```bash
    gcloud auth login
    gcloud auth application-default login
    ```
-2. **目标 GCP 项目权限**：执行者账号需具备项目 `Owner` 或 `Editor` + `Security Admin`（用于创建 Service Account 与绑定 IAM）。
-3. **Python & uv**：Python `>= 3.11, < 3.14`，安装了 `uv` 包管理器 - [安装指引](https://docs.astral.sh/uv/getting-started/installation/)
+2. **GCP Project Permissions**: Your deployer identity requires `Owner` or `Editor` + `Security Admin` on the target project (to create Service Accounts and bind IAM policies).
+3. **Python & uv**: Python `>= 3.11, < 3.14` with the `uv` package manager installed - [Installation Guide](https://docs.astral.sh/uv/getting-started/installation/)
 
 ---
 
-### 脚本语法与参数说明
+### Syntax & Parameters
 
 ```bash
 bash deploy.sh <PROJECT_ID> [REGION] [--ge APP_ID]
 ```
 
-支持通过位置参数或明确 Flag 进行传参：
+Or using explicit flags:
 
 ```bash
 bash deploy.sh <PROJECT_ID> --region <REGION> --ge <APP_ID>
 ```
 
-#### 参数详解
+#### Parameter Reference
 
-| 参数 / 选项 | 必填 | 默认值 | 说明 |
+| Parameter / Flag | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `PROJECT_ID` | **是** | - | 目标 Google Cloud 项目 ID（首个位置参数）。 |
-| `REGION` / `-r` / `--region` | 否 | `us-central1` | 部署地域（如 `us-central1`, `us-east4` 等）。 |
-| `--ge APP_ID` / `--ge=APP_ID` | 否 | - | Gemini Enterprise 应用（Search/Assistant Engine）ID。指定后会自动完成权限配置并将 Agent 注册到该 Gemini Enterprise 助手。 |
+| `PROJECT_ID` | **Yes** | - | Target Google Cloud Project ID (first positional argument). |
+| `REGION` / `-r` / `--region` | No | `us-central1` | Deployment region (e.g. `us-central1`, `us-east4`). |
+| `--ge APP_ID` / `--ge=APP_ID` | No | - | Gemini Enterprise Application (Search/Assistant Engine) ID. When provided, automatically binds permissions and registers the agent to the specified assistant. |
 
 ---
 
-### 自动化执行流程
+### Automated Workflow
 
-[`deploy.sh`](file:///Users/zgz/gamerheads-agent/deploy.sh) 会全自动顺序执行以下四个关键步骤：
+[`deploy.sh`](file:///Users/zgz/gamerheads-agent/deploy.sh) executes four end-to-end stages in sequence:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Dev as 开发者 / CI-CD
+    actor Dev as Developer / CI-CD
     participant Script as deploy.sh
     participant IAM as GCP IAM & SA
     participant Setup as setup.sh (GCS & APIs)
@@ -91,115 +91,115 @@ sequenceDiagram
     participant GE as Gemini Enterprise
 
     Dev->>Script: bash deploy.sh <PROJECT_ID> <REGION> [--ge APP_ID]
-    Script->>IAM: 自动创建 gamerheads-runtime 专用服务账号并绑定角色
-    Script->>Setup: 调用 setup.sh 启用必要 API 并创建交付产物 GCS 存储桶
-    Setup-->>Script: 存储桶就绪 (gs://${PROJECT_ID}-gamerheads-artifacts)
-    Script->>CLI: agents-cli deploy 打包并部署到 Agent Runtime
-    CLI-->>Script: 部署 Reasoning Engine 并完成存活健康检查
-    opt 传入了 --ge APP_ID
-        Script->>GE: 为 Discovery Engine SA 授权并挂载注册 Agent
-        GE-->>Script: Gemini Enterprise 注册成功
+    Script->>IAM: Create gamerheads-runtime SA & bind least-privilege roles
+    Script->>Setup: Run setup.sh to enable APIs & provision GCS artifacts bucket
+    Setup-->>Script: Artifact bucket ready (gs://${PROJECT_ID}-gamerheads-artifacts)
+    Script->>CLI: agents-cli deploy: package & deploy to Agent Runtime
+    CLI-->>Script: Provision Reasoning Engine & verify active health status
+    opt Provided --ge APP_ID
+        Script->>GE: Authorize Discovery Engine SA & register agent
+        GE-->>Script: Gemini Enterprise registration successful
     end
-    Script-->>Dev: 部署完成 (Active & Verified)
+    Script-->>Dev: Deployment verified & active!
 ```
 
-#### 1. 专用运行服务账号与 IAM 配置
-- 自动创建最小权限运行服务账号：`gamerheads-runtime@${PROJECT_ID}.iam.gserviceaccount.com`。
-- 授予 Vertex AI、服务消费、日志写入与链路追踪权限：
+#### 1. Dedicated Runtime Service Account & IAM Setup
+- Provisions a dedicated service account: `gamerheads-runtime@${PROJECT_ID}.iam.gserviceaccount.com`.
+- Grants least-privilege roles for Vertex AI, logging, tracing, and service usage:
   - `roles/aiplatform.user`
   - `roles/serviceusage.serviceUsageConsumer`
   - `roles/logging.logWriter`
   - `roles/cloudtrace.agent`
-- 赋予当前部署账号操作该 SA 的 `roles/iam.serviceAccountUser` 与 Token 生成权限。
+- Configures Token Creator (`roles/iam.serviceAccountTokenCreator`) and assigns the deploying user `roles/iam.serviceAccountUser`.
 
-#### 2. 云资源环境初始化 ([`setup.sh`](file:///Users/zgz/gamerheads-agent/setup.sh))
-- 自动批量启用所有必需的 Google Cloud APIs（Vertex AI、Cloud Build、Cloud Storage、Discovery Engine、Cloud Trace、App Hub 等）。
-- 自动创建专属交付产物 GCS 存储桶：`gs://${PROJECT_ID}-gamerheads-artifacts`（开启统一存储桶级别访问控制）。
-- 为运行时服务账号授予存储桶级别的对象管理权限：`roles/storage.objectAdmin`。
+#### 2. Cloud Resource Initialization ([`setup.sh`](file:///Users/zgz/gamerheads-agent/setup.sh))
+- Enables required Google Cloud APIs (Vertex AI, Cloud Build, Cloud Storage, Discovery Engine, Cloud Trace, App Hub, etc.).
+- Creates the dedicated artifacts bucket: `gs://${PROJECT_ID}-gamerheads-artifacts` (with uniform bucket-level access).
+- Grants bucket-scoped `roles/storage.objectAdmin` to the runtime service account.
 
-#### 3. 依赖打包与 Vertex AI Reasoning Engine 部署
-- 自动同步项目虚拟环境依赖与 `agents-cli`。
-- 执行 `agents-cli deploy` 打包代码与依赖，将其部署为 Vertex AI Reasoning Engine。
-- 自动注入运行时环境变量：
+#### 3. Packaging & Vertex AI Reasoning Engine Deployment
+- Syncs project dependencies and ensures `agents-cli` is ready.
+- Runs `agents-cli deploy` to package and deploy to Vertex AI Reasoning Engine.
+- Injects runtime environment variables:
   - `ARTIFACT_BUCKET_NAME=${PROJECT_ID}-gamerheads-artifacts`
   - `GOOGLE_CLOUD_LOCATION=global`
-- 通过 REST API 执行健康检查，验证 Reasoning Engine 是否已处于 `ACTIVE` 状态。
+- Performs live health checks via the Vertex AI REST API to confirm the engine state is `ACTIVE`.
 
-#### 4. Gemini Enterprise 助手无缝注册（可选）
-- 当传入 `--ge <APP_ID>` 时自动触发。
-- 自动提取 GCP 项目编号，为 Discovery Engine 平台服务账号（`service-${PROJECT_NUM}@gcp-sa-discoveryengine.iam.gserviceaccount.com`）授予 Vertex AI 调用权限（`roles/aiplatform.user`）。
-- 自动读取 [`agent.yaml`](file:///Users/zgz/gamerheads-agent/agent.yaml) 中的多语言显示名称与描述配置。
-- 调用 Discovery Engine v1alpha API，将刚刚部署的 Reasoning Engine 实例挂载为 Gemini Enterprise 助手集合中的自定义 Agent。
+#### 4. Seamless Gemini Enterprise Registration (Optional)
+- Triggered automatically when `--ge <APP_ID>` is supplied.
+- Resolves the GCP Project Number and grants the Discovery Engine Service Account (`service-${PROJECT_NUM}@gcp-sa-discoveryengine.iam.gserviceaccount.com`) invocation access (`roles/aiplatform.user`).
+- Reads localized display names and descriptions from [`agent.yaml`](file:///Users/zgz/gamerheads-agent/agent.yaml).
+- Calls the Discovery Engine v1alpha REST API to mount the Reasoning Engine instance as a custom agent under the specified assistant collection.
 
 ---
 
-### 常见部署示例
+### Deployment Scenarios
 
-#### 场景 1：基础部署至 Vertex AI Agent Runtime
+#### Scenario 1: Deploy to Vertex AI Agent Runtime
 
-部署至默认地域 `us-central1`：
+Deploy with default settings (`us-central1`):
 ```bash
 bash deploy.sh my-gcp-project-id
 ```
 
-指定部署地域（例如 `us-central1` 或 `us-east4`）：
+Specify a custom deployment region:
 ```bash
 bash deploy.sh my-gcp-project-id us-central1
-# 或使用 flag
+# Or using the flag
 bash deploy.sh my-gcp-project-id --region=us-central1
 ```
 
-#### 场景 2：部署并直接注册到 Gemini Enterprise
+#### Scenario 2: Deploy & Register to Gemini Enterprise
 
-部署 Agent 并将其注册到指定的 Gemini Enterprise 应用（例如 APP_ID 为 `gamerheads-assistant`）：
+Deploy the agent and register it to your Gemini Enterprise assistant (e.g., `gamerheads-assistant`):
 ```bash
 bash deploy.sh my-gcp-project-id us-central1 --ge gamerheads-assistant
 ```
 
 ---
 
-### 云端资源清理 (`setup.sh`)
+### Cloud Resource Teardown (`setup.sh`)
 
-如果需要销毁测试过程中创建的云端资源，可直接调用 [`setup.sh`](file:///Users/zgz/gamerheads-agent/setup.sh) 的 `--cleanup` 选项：
+To clean up cloud resources created during testing, use the `--cleanup` flag in [`setup.sh`](file:///Users/zgz/gamerheads-agent/setup.sh):
 
 ```bash
-# 清理已创建的 GCS 存储桶资源
+# Delete the provisioned GCS artifacts bucket
 bash setup.sh my-gcp-project-id us-central1 --cleanup
 ```
 
 > [!WARNING]
-> `--cleanup` 操作会永久递归删除 `gs://${PROJECT_ID}-gamerheads-artifacts` 存储桶及其所有已生成的视频和图像产物，请谨慎操作。
+> The `--cleanup` flag permanently deletes the `gs://${PROJECT_ID}-gamerheads-artifacts` bucket and all generated video/image deliverables inside it.
 
 ---
 
-## 🌟 核心特性
+## 🌟 Core Features
 
-- 🎬 **智能游戏理解与分镜解说 (Commentary Script)**：自动解析实机游戏视频节奏与高光时刻，结合 Google Search Grounding 实时获取游戏背景世界观、角色设定与网络梗，输出带精确时间戳的 Shot-by-shot 解说文案。
-- 🎨 **虚拟主播形象设计 (Golden Anchor Avatar)**：支持自定义主播外貌、服饰、直播间环境及手持游戏外设（如手柄/掌机），基于 Imagen 生成高保真定妆肖像（“黄金锚点”）。
-- 🗣️ **连续动作口型与表情反应合成 (Streamer Reaction Video)**：以黄金锚点肖像为首帧基准，结合解说文案进行连续帧图像条件驱动合成（Image-to-Video），生成自然生动、口型吻合的主播反应视频片段并完成无缝拼接。
-- 🎞️ **画中画与多轨音频后期制作 (Lightweight Composite)**：极速（~3秒 FFmpeg）完成画中画（PIP）或上下分屏排版渲染，平衡混合游戏原声与主播解说配音，并自动烧录多语言解说字幕。
-- 📊 **智能 DAG 依赖管理与实时看板 (Pipeline Kanban)**：基于单一数据源严格隔离输入规范（`spec`）与交付产物（`artifacts`），具备下游级联影响检测（`detect_impact`）与零上下文衰减的实时生产看板。
+- 🎬 **Intelligent Gameplay Comprehension & Scripting (Commentary Script)**: Analyzes video pacing and gameplay highlights, paired with Google Search Grounding to pull game lore and current memes into a timed, shot-by-shot commentary script.
+- 🎨 **Streamer Likeness Design (Golden Anchor Avatar)**: Configures streamer appearance, apparel, studio setting, and handheld gaming peripherals (e.g. controller or handheld console), generating a high-fidelity master portrait via Imagen.
+- 🗣️ **Continuous Motion, Expressions & Lip-Sync (Streamer Reaction Video)**: Starting from the Golden Anchor portrait, conditions image-to-video generation across consecutive frames to synthesize smooth, expressive, lip-synced reaction clips.
+- 🎞️ **Picture-in-Picture & Multi-Track Audio Post-Production (Lightweight Composite)**: Produces picture-in-picture (PIP) or split-screen layouts in ~3 seconds via FFmpeg, balancing game audio with commentary and burning in styled subtitles.
+- 📊 **Dynamic DAG Dependency Management & Live Kanban (Pipeline Kanban)**: Strictly partitions inputs (`spec`) from deliverables (`artifacts`), featuring automatic downstream impact detection (`detect_impact`) and a zero-context-decay Kanban dashboard.
 
 ---
 
-## 📐 系统架构与工作流 (Diamond DAG)
+## 📐 System Architecture & Workflow (Diamond DAG)
 
-系统采用状态与交付物严格解耦的 **Diamond DAG（菱形有向无环图）** 架构，而非线性流水线：
+The pipeline is modeled as a **Diamond DAG (Directed Acyclic Graph)** with strict separation between inputs and outputs:
 
 ```mermaid
 flowchart TD
-    subgraph Spec_Inputs ["输入规范 (state.spec)"]
+    subgraph Spec_Inputs ["Input Specifications (state.spec)"]
         Spec_Global["spec.global\n(footageUrl, gamingDevice, aspectRatio)"]
         Spec_Script["spec.script\n(game, cta, searchGrounding, notes)"]
         Spec_Avatar["spec.avatar\n(appearance, referenceImageUrl, setting)"]
         Spec_Comp["spec.composite\n(layout, pipPlacement, volumes, subtitles)"]
     end
 
-    subgraph Pipeline_Stages ["制作阶段交付物 (state.artifacts)"]
-        Stage1["阶段 1: 解说脚本 (Script)\n(script_agent)\n产物: artifacts.script\n耗时: ~10s (Gemini)"]
-        Stage2["阶段 2: 主播定妆肖像 (Golden Anchor)\n(avatar_agent)\n产物: artifacts.avatar\n耗时: ~5s (Imagen)"]
-        Stage3["阶段 3: 主播反应视频 (The Join 汇聚节点)\n(video_agent)\n产物: artifacts.streamer_video\n耗时: 几分钟 (Omni 串行连续帧)"]
-        Stage4["阶段 4: 轻量画中画合成 (Composite)\n(generate_composite)\n产物: artifacts.composite\n耗时: ~3s (FFmpeg 画中画+音频混流)"]
+    subgraph Pipeline_Stages ["Production Stages (state.artifacts)"]
+        Stage1["Stage 1: Commentary Script\n(script_agent)\nArtifact: artifacts.script\nDuration: ~10s (Gemini)"]
+        Stage2["Stage 2: Streamer Avatar (Golden Anchor)\n(avatar_agent)\nArtifact: artifacts.avatar\nDuration: ~5s (Imagen)"]
+        Stage3["Stage 3: Streamer Video (The Join)\n(video_agent)\nArtifact: artifacts.streamer_video\nDuration: Multi-minute (Omni consecutive frames)"]
+        Stage4["Stage 4: Lightweight Composite\n(generate_composite)\nArtifact: artifacts.composite\nDuration: ~3s (FFmpeg PIP + Audio mix)"]
     end
 
     Spec_Global -->|footageUrl / gamingDevice| Stage1
@@ -208,121 +208,121 @@ flowchart TD
     Spec_Global -->|gamingDevice / aspectRatio| Stage2
     Spec_Avatar --> Stage2
 
-    Stage1 -->|需已就绪| Stage3
-    Stage2 -->|需已就绪| Stage3
+    Stage1 -->|Required| Stage3
+    Stage2 -->|Required| Stage3
     Spec_Global -->|aspectRatio / gamingDevice| Stage3
 
-    Stage3 -->|需已就绪| Stage4
+    Stage3 -->|Required| Stage4
     Spec_Global -->|footageUrl / aspectRatio| Stage4
     Spec_Comp --> Stage4
 ```
 
-### 核心机制说明
-1. **并行解耦的前期制作 (Stages 1 & 2)**：解说脚本撰写与虚拟主播肖像设计完全独立，支持创作者按任意顺序推进或并行生成。
-2. **唯一汇聚节点 (Stage 3 - Streamer Video)**：同时消费 `artifacts["script"]` 和 `artifacts["avatar"]`，串行生成连续视频片段以保证主播形象的一致性。
-3. **毫秒级轻量后期 (Stage 4 - Composite)**：音量调节、画中画位置（左上/右上等）调整或字幕微调仅耗费约 3 秒 FFmpeg 重新合成，无需重跑昂贵的主播视频渲染。
-4. **状态隔离 (Two-Root State Model)**：会话状态严格划分为 `state["spec"]`（用户输入规范）和 `state["artifacts"]`（Agent 生成的成果物）。
+### Architectural Principles
+1. **Decoupled Pre-Production (Stages 1 & 2)**: Commentary scripting and streamer portrait generation are completely independent. Creators can initiate either branch first or develop both simultaneously.
+2. **The Join Node (Stage 3 - Streamer Video)**: The only node requiring both `artifacts["script"]` and `artifacts["avatar"]`. Generates sequential clips conditioned on the Golden Anchor and preceding segment end-frames.
+3. **Sub-Second Post-Production (Stage 4 - Composite)**: Modifying layout (PIP corner), volume balance, or subtitles takes ~3 seconds of FFmpeg re-rendering without re-running expensive streamer video generation.
+4. **Strict Two-Root State Model**: Session state cleanly isolates inputs (`state["spec"]`) from generated deliverables (`state["artifacts"]`).
 
 ---
 
-## 💻 本地开发与快速上手
+## 💻 Local Development & Quick Start
 
-### 1. 同步项目依赖
+### 1. Sync Dependencies
 
 ```bash
 uv sync
-# 或者通过 agents-cli
+# Or via agents-cli
 agents-cli install
 ```
 
-### 2. 启动本地交互式 Playground
+### 2. Launch Local Interactive Playground
 
-利用 `agents-cli playground` 在本地快速调试 Agent，支持代码热重载：
+Use `agents-cli playground` for real-time local debugging with hot-reloading:
 
 ```bash
 agents-cli playground
 ```
 
-### 3. 运行自动化测试
+### 3. Run Automated Tests
 
 ```bash
 uv run pytest tests/unit tests/integration
 ```
 
-### 4. 运行质量评估 (Evaluation)
+### 4. Run Quality Evaluations
 
 ```bash
-# 基于默认数据集运行评测并打分
+# Run evaluations over the default dataset and grade traces
 agents-cli eval run
 
-# 查看内置指标列表
+# List built-in evaluation metrics
 agents-cli eval metric list
 ```
 
 ---
 
-## 📁 项目目录结构
+## 📁 Project Directory Structure
 
 ```
 gamerheads-agent/
-├── app/                                # 核心 Agent 业务逻辑
-│   ├── agent.py                        # 主协调导演 Agent (Director)
-│   ├── agent_runtime_app.py            # Vertex AI Agent Runtime 入口
-│   ├── fast_api_app.py                 # 本地及 HTTP FastAPI 服务入口
-│   ├── pipeline.py                     # 管道状态管理器、DAG 依赖分析与实时看板
-│   ├── agents/                         # 专业领域子 Agent
-│   │   ├── avatar_agent.py             # 虚拟主播形象设计 Agent
-│   │   ├── script_agent.py             # 游戏解说文案创作 Agent
-│   │   └── video_agent.py              # 反应视频与后期合成调度 Agent
-│   ├── media/                          # 媒体生成与音视频处理底层库
-│   │   ├── clips.py                    # 视频分段逻辑与时间戳对齐
-│   │   ├── composite.py                # FFmpeg 画中画合成与混音
-│   │   ├── omni.py                     # 图像与视频生成模型接口
-│   │   ├── stitch.py                   # 连续视频片段平滑拼接
-│   │   └── subtitles.py                # 字幕生成与样式烧录
-│   ├── tools/                          # ADK 工具库
-│   │   ├── ingest_tools.py             # 外部媒体与 Drive 链接抓取下载
-│   │   └── spec_tools.py               # Spec 规范安全更新与变更追踪
-│   ├── plugins/                        # ADK 插件库 (产物过滤、文件持久化)
-│   └── app_utils/                      # A2A 协议与引擎适配工具
-├── tests/                              # 测试用例库
-│   ├── unit/                           # 单元测试 (Pipeline, Media, Agents)
-│   ├── integration/                    # 端到端集成测试
-│   └── eval/                           # 评估数据集与 LLM-as-judge 评测配置
-├── deployment/                         # 部署模板与 Terraform 基础设施代码
-├── deploy.sh                           # 🚀 一键自动化部署脚本 (Vertex AI + GE)
-├── setup.sh                            # 🛠️ GCP 云资源初始化与清理脚本
-├── agent.yaml                          # Agent 元数据与多语言说明
-├── Dockerfile                          # 容器化构建文件
-└── pyproject.toml                      # 项目依赖与工具链配置 (uv)
+├── app/                                # Core Agent business logic
+│   ├── agent.py                        # Director Agent (Coordinator)
+│   ├── agent_runtime_app.py            # Vertex AI Agent Runtime entry point
+│   ├── fast_api_app.py                 # FastAPI backend server
+│   ├── pipeline.py                     # Pipeline state manager, DAG analyzer & Kanban
+│   ├── agents/                         # Specialist Domain Subagents
+│   │   ├── avatar_agent.py             # Streamer avatar generation agent
+│   │   ├── script_agent.py             # Gameplay commentary scriptwriting agent
+│   │   └── video_agent.py              # Reaction video & composite scheduling agent
+│   ├── media/                          # Media generation & FFmpeg utilities
+│   │   ├── clips.py                    # Video segmentation & timestamp alignment
+│   │   ├── composite.py                # FFmpeg PIP layout & audio mixing
+│   │   ├── omni.py                     # Omni image/video generation client
+│   │   ├── stitch.py                   # Seamless multi-segment stitching
+│   │   └── subtitles.py                # Subtitle generation & styling
+│   ├── tools/                          # ADK tool definitions
+│   │   ├── ingest_tools.py             # Media & Google Drive asset downloader
+│   │   └── spec_tools.py               # Spec schema updates & change tracking
+│   ├── plugins/                        # ADK plugins (deliverable filter, artifact saving)
+│   └── app_utils/                      # A2A protocol & runtime adapters
+├── tests/                              # Test suites
+│   ├── unit/                           # Unit tests (Pipeline, Media, Agents, Plugins)
+│   ├── integration/                    # End-to-end integration tests
+│   └── eval/                           # Eval datasets & LLM-as-judge configs
+├── deployment/                         # Deployment templates & Terraform infrastructure
+├── deploy.sh                           # 🚀 Automated deployment script (Vertex AI + GE)
+├── setup.sh                            # 🛠️ Cloud resource provisioning & teardown script
+├── agent.yaml                          # Agent metadata & localized descriptions
+├── Dockerfile                          # Containerization configuration
+└── pyproject.toml                      # Project dependencies & build config (uv)
 ```
 
 ---
 
-## 📋 常用命令速查表
+## 📋 CLI Reference Cheat Sheet
 
-| 操作 | 对应命令 | 说明 |
+| Task | Command | Description |
 | :--- | :--- | :--- |
-| **安装依赖** | `uv sync` 或 `agents-cli install` | 安装项目及开发运行依赖 |
-| **本地调试** | `agents-cli playground` | 启动本地交互式 Web 调试界面 |
-| **代码检查** | `agents-cli lint` | 运行 Ruff、Type Check 与代码规范扫描 |
-| **运行测试** | `uv run pytest tests/unit tests/integration` | 执行单元测试与集成测试 |
-| **效果评测** | `agents-cli eval run` | 运行 LLM-as-judge 质量评测 |
-| **标准部署** | `bash deploy.sh <PROJECT_ID>` | 执行一键部署流水线 |
-| **企业发布** | `agents-cli publish gemini-enterprise` | 手动将已部署 Agent 注册到 Gemini Enterprise |
-| **基础设施** | `agents-cli scaffold enhance` | 扩充 CI/CD Pipeline 与 Terraform 基础设施代码 |
+| **Install Dependencies** | `uv sync` or `agents-cli install` | Install runtime and development packages |
+| **Local Playground** | `agents-cli playground` | Launch local interactive web development interface |
+| **Lint & Format** | `agents-cli lint` | Run Ruff, type checks, and code quality scans |
+| **Run Tests** | `uv run pytest tests/unit tests/integration` | Run unit and integration test suites |
+| **Evaluation** | `agents-cli eval run` | Evaluate agent behavior with LLM-as-judge |
+| **One-Click Deploy** | `bash deploy.sh <PROJECT_ID>` | Deploy to Vertex AI Agent Runtime |
+| **Publish to GE** | `agents-cli publish gemini-enterprise` | Register deployed agent with Gemini Enterprise |
+| **Infra & CI/CD** | `agents-cli scaffold enhance` | Add CI/CD pipelines and Terraform infrastructure |
 
 ---
 
-## 📡 可观测性与 A2A 协议支持
+## 📡 Observability & A2A Protocol Support
 
-### 云端可观测性 (Observability)
-Agent 默认集成了 Google Cloud ADK 遥测组件：
-- **Cloud Trace**：全链路追踪用户会话请求与大模型工具调用延时。
-- **Cloud Logging**：自动记录结构化日志与 Pipeline 状态流转。
-- **BigQuery Agent Analytics**：生产环境会话与调用指标落库分析。
+### Cloud Observability
+The agent integrates natively with Google Cloud telemetry via ADK:
+- **Cloud Trace**: Distributed tracing for incoming user requests, tool latency, and LLM calls.
+- **Cloud Logging**: Structured event logs and real-time pipeline status transitions.
+- **BigQuery Agent Analytics**: Long-term session metrics and operational analytics.
 
-### A2A 协议互操作 (Agent-to-Agent Protocol)
-本 Agent 完全兼容 [A2A 协议](https://a2a-protocol.org/)：
-- 支持作为专家 Agent 供其他多智能体系统调用编排。
-- 可使用 [A2A Inspector](https://github.com/a2aproject/a2a-inspector) 进行协议兼容性与交互测试。
+### A2A Protocol Interoperability
+This agent fully implements the [A2A Protocol](https://a2a-protocol.org/):
+- Can be discovered and invoked as a specialist subagent by other multi-agent systems.
+- Compatible with the [A2A Inspector](https://github.com/a2aproject/a2a-inspector) for live protocol and interoperability testing.
