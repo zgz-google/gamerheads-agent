@@ -55,6 +55,7 @@ gcloud services enable \
   iam.googleapis.com \
   apphub.googleapis.com \
   discoveryengine.googleapis.com \
+  cloudresourcemanager.googleapis.com \
   --project="${PROJECT_ID}" --quiet
 
 echo "===> 2. Setting up Cloud Storage Artifact Bucket..."
