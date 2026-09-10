@@ -500,7 +500,6 @@ def render_pipeline_kanban(state: dict[str, Any]) -> str:
 
     for stage_key in stages:
         meta = PIPELINE_STAGES[stage_key]
-        stage_num = meta["stage_num"]
         stage_name = meta["name"]
         eval_result = evaluate_stage_status(stage_key, state)
         status = eval_result["status"]
@@ -520,9 +519,7 @@ def render_pipeline_kanban(state: dict[str, Any]) -> str:
             emoji = "🛑"
             pending_or_blocked.append(stage_name)
 
-        lines.append(
-            f"- [{stage_name}]: {emoji} {status} - {summary}"
-        )
+        lines.append(f"- [{stage_name}]: {emoji} {status} - {summary}")
 
         # Embed Deliverable details directly under each stage card
         artifacts = state.get("artifacts", {})
