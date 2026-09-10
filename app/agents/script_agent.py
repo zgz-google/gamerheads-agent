@@ -526,14 +526,12 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
     lines_summary = []
     for s in final_segments:
         lines_summary.append(
-            f"Line {s['id']} [{s['startTime']} - {s['endTime']} ({s['duration']}s)]:\n"
-            f"  - Action: {s['prompt']}\n"
-            f'  - Dialogue: "{s["dialogue"]}"'
+            f'Line {s["id"]} [{s["startTime"]} - {s["endTime"]} ({s["duration"]}s)]: "{s["dialogue"]}"'
         )
 
     return (
         f"Successfully generated script with {len(final_segments)} segments (Total: {total_dur}s):\n\n"
-        + "\n\n".join(lines_summary)
+        + "\n".join(lines_summary)
     )
 
 
@@ -562,33 +560,36 @@ class LineEditItem(BaseModel):
 
 
 async def edit_script_lines(
-    lines: list[LineEditItem], tool_context: ToolContext
+    edits: list[LineEditItem],
+    tool_context: ToolContext,
 ) -> str:
-    """Performs surgical edits to specific lines of the existing script without re-running visual generation.
+    """Updates specific commentary lines or on-screen actions in an existing script.
 
-    Use this tool when the user wants to tweak wording, names, or micro-actions on specific lines.
-    It leaves all untouched lines, segment counts, and timings exactly intact.
+    Only updates the specified lines and preserves all other segments, timings, and durations.
+    Automatically marks downstream deliverables (streamer_video, composite) OUT_OF_SYNC.
 
     Args:
-        lines: List of line edits, each specifying line index (1-based) and optional new dialogue/action.
+        edits: List of LineEditItem specifying line number and new dialogue/action.
+        tool_context: ADK ToolContext holding session state.
 
     Returns:
-        Status summary of modified lines and the current full shot list.
+        Summary of modified lines with updated script overview.
     """
-    state = tool_context.state
-    script_artifact = state.get("artifacts", {}).get("script")
-    segments = script_artifact.get("segments") if script_artifact else None
+    state = dict(tool_context.state) if tool_context and tool_context.state else {}
+    artifacts = state.get("artifacts", {})
+    script_artifact = artifacts.get("script")
 
-    if not segments or not isinstance(segments, list):
+    if not script_artifact or "segments" not in script_artifact:
         return "Error: There is no script to edit yet. Call watch_gameplay_and_generate_script first."
 
-    count = len(segments)
-    modified = []
+    segments = list(script_artifact.get("segments", []))
+    seg_map = {s["id"]: i for i, s in enumerate(segments)}
 
-    for edit in lines:
-        if not (1 <= edit.line <= count):
+    modified = []
+    for edit in edits:
+        if edit.line not in seg_map:
             continue
-        idx = edit.line - 1
+        idx = seg_map[edit.line]
         if edit.dialogue is not None:
             segments[idx]["dialogue"] = edit.dialogue
         if edit.on_screen is not None:
@@ -604,12 +605,10 @@ async def edit_script_lines(
     for s in segments:
         marker = " (MODIFIED)" if s["id"] in modified else ""
         lines_summary.append(
-            f"Line {s['id']}{marker} [{s.get('startTime', '00:00')} - {s.get('endTime', '00:00')} ({s.get('duration', 6)}s)]:\n"
-            f"  - Action: {s.get('prompt', '')}\n"
-            f'  - Dialogue: "{s.get("dialogue", "")}"'
+            f'Line {s["id"]}{marker} [{s.get("startTime", "00:00")} - {s.get("endTime", "00:00")} ({s.get("duration", 6)}s)]: "{s.get("dialogue", "")}"'
         )
 
-    return f"Successfully updated line(s) {modified}:\n\n" + "\n\n".join(lines_summary)
+    return f"Successfully updated line(s) {modified}:\n\n" + "\n".join(lines_summary)
 
 
 # ============================================================================
@@ -642,7 +641,10 @@ Your purpose is creating and maintaining high-energy, synchronized gameplay comm
    - When grounding is off or tone is unspecified: proactively suggest offering research on game mechanics or proposing distinct streamer personas (e.g. funny/trolling vs. esports tryhard).
 
 6. SPECIALIST DELIVERY (Concise upstream reporting):
-   You are an internal specialist reporting to the Director. Once all required production actions are complete and your job is finished, concisely synthesize the deliverable—focusing on line timings, actions, spoken dialogue, and any single high-value creative enhancement recommendation for the Director to pose to the creator.
+   You are an internal specialist reporting to the Director (main agent). Once all required production actions are complete and your job is finished, concisely synthesize the deliverable:
+   - Provide ONLY the line timings (timestamps and duration) and spoken dialogue (`dialogue`) for each segment.
+   - NEVER include physical actions, body movements, gestures, micro-expressions, or camera prompts (`prompt` / `on_screen`) in your report to the Director. All visual actions and framing prompts are already preserved in session state artifacts (`artifacts.script`) for downstream video generation.
+   - Include any single high-value creative enhancement recommendation for the Director to pose to the creator.
 """
 
 
@@ -659,7 +661,6 @@ def script_agent_instruction(context: ReadonlyContext) -> str:
     game = script_spec.get("game", "")
     game_url = script_spec.get("gameUrl", "")
     search_grounding = script_spec.get("searchGrounding", False)
-    research_artifact = artifacts.get("research")
     cta = script_spec.get("cta", "")
     additional_instructions = script_spec.get("additionalInstructions", "")
     has_script = "script" in artifacts
@@ -672,12 +673,6 @@ def script_agent_instruction(context: ReadonlyContext) -> str:
         f"- Video Aspect Ratio: {aspect_ratio}",
         f"- Google Search Grounding: {'Enabled' if search_grounding else 'Disabled'}",
     ]
-    if research_artifact:
-        status_lines.append("- Researched Game Facts: Present in session")
-    elif search_grounding:
-        status_lines.append(
-            "- Researched Game Facts: Missing (Call research_game before drafting)"
-        )
     if game_url:
         status_lines.append(f"- Official Game URL: {game_url}")
     if cta:

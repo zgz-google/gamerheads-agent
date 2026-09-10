@@ -136,6 +136,8 @@ async def test_edit_script_lines_success():
 
     res = await edit_script_lines(edits, mock_ctx)
     assert "Successfully updated line(s) [2, 1]" in res
+    assert "Action:" not in res
+    assert "Streamer grins broadly at desk" not in res
 
     saved_segs = mock_ctx.state["artifacts"]["script"]["segments"]
     assert saved_segs[0]["prompt"] == "Streamer grins broadly at desk"
@@ -349,6 +351,9 @@ async def test_watch_gameplay_and_generate_script_with_grounding_propagation():
 
     assert "Successfully generated script with 1 segments" in res
     assert mock_ctx.state["artifacts"]["script"]["total_duration"] == 5
+    assert "Action:" not in res
+    assert "Streamer hands on desk" not in res
+    assert 'Line 1 [00:00 - 00:05 (5s)]: "[Excited] Apex Legends season 20!"' in res
 
 
 @pytest.mark.asyncio
