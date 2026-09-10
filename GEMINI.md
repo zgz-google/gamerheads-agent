@@ -146,8 +146,7 @@ We eliminate artificial "stale" or "approved" state machine flags in favor of a 
 
 To prevent the Director from "forgetting" pending remakes, remaining pipeline stages, or generated deliverable details across multi-turn interactions:
 - **`render_pipeline_kanban(state)`**: Evaluates each stage status (`READY`, `OUT_OF_SYNC`, `PENDING`, `BLOCKED`) based on `context.state` and timestamp comparison (`_updated_at`), and **directly embeds each stage's deliverables / artifacts** (commentary lines, avatar metadata, video files) directly under the stage card, tagging stale assets explicitly (`(⚠️ Stale - Out of sync)`).
-- **Dynamic Instruction Provider**: In `app/agent.py`, `root_agent` uses ADK's native `instruction=director_instruction(context: ReadonlyContext)` to inject global spec ownership (`footageUrl`, `gamingDevice`, `aspectRatio`) and the unified real-time Kanban.
-- On **every single turn**, the current unified Kanban dashboard and active director focus are injected into the model's system prompt, ensuring zero context decay and immediate visibility of all out-of-sync downstream assets.
+- On **every single turn**, the current unified Kanban dashboard and real-time deliverable states are injected into the model's system prompt, ensuring zero context decay and immediate visibility of all out-of-sync downstream assets.
 
 ### 5. Single Source of Truth & Explicit Set/Get
 
