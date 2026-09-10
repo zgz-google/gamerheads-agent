@@ -24,6 +24,7 @@ import aiohttp
 from dotenv import load_dotenv
 from google import genai
 from google.adk.agents import Agent
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.models import Gemini
 from google.adk.tools import ToolContext
 from google.genai import types
@@ -596,13 +597,56 @@ Your sole purpose is creating and refining high-energy, perfectly synchronized g
 After tool execution, provide a clear, concise summary of the lines and timing back to the Director.
 """
 
+
+def script_agent_instruction(context: ReadonlyContext) -> str:
+    state = dict(context.state) if context and context.state else {}
+    spec = state.get("spec", {})
+    global_spec = spec.get("global", {})
+    script_spec = spec.get("script", {})
+    artifacts = state.get("artifacts", {})
+
+    footage_url = global_spec.get("footageUrl", "")
+    gaming_device = global_spec.get("gamingDevice", "PC")
+    aspect_ratio = global_spec.get("aspectRatio", "16:9")
+    game = script_spec.get("game", "")
+    game_url = script_spec.get("gameUrl", "")
+    search_grounding = script_spec.get("searchGrounding", False)
+    cta = script_spec.get("cta", "")
+    additional_instructions = script_spec.get("additionalInstructions", "")
+    has_script = "script" in artifacts
+
+    status_lines = [
+        "【CURRENT PRODUCTION SPEC & SESSION STATE】",
+        f"- Registered Gameplay Footage (footageUrl): {footage_url or 'None (Not provided yet)'}",
+        f"- Registered Game Name: {game or 'None (Not specified yet)'}",
+        f"- Gaming Platform: {gaming_device}",
+        f"- Video Aspect Ratio: {aspect_ratio}",
+        f"- Google Search Grounding: {'Enabled' if search_grounding else 'Disabled'}",
+    ]
+    if game_url:
+        status_lines.append(f"- Official Game URL: {game_url}")
+    if cta:
+        status_lines.append(f"- Call to Action (CTA): {cta}")
+    if additional_instructions:
+        status_lines.append(f"- Creative Instructions / Tone: {additional_instructions}")
+    if has_script:
+        status_lines.append(
+            "- Existing Script Deliverable: Present in session (available for line editing)"
+        )
+    else:
+        status_lines.append("- Existing Script Deliverable: None drafted yet")
+
+    status_block = "\n".join(status_lines)
+    return f"{SCRIPT_AGENT_INSTRUCTION}\n\n{status_block}"
+
+
 script_agent = Agent(
     name="script_agent",
     model=Gemini(
         model=MODEL,
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
-    instruction=SCRIPT_AGENT_INSTRUCTION,
+    instruction=script_agent_instruction,
     tools=[
         watch_gameplay_and_generate_script,
         edit_script_lines,

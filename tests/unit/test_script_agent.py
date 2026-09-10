@@ -351,3 +351,40 @@ def test_build_script_prompt_search_grounding():
     )
     assert "GOOGLE SEARCH GROUNDING ACTIVE" in prompt_grounding
     assert "Upgrade Stations and Armor Core system" in prompt_grounding
+
+
+def test_script_agent_instruction_dynamic_injection():
+    """Tests that script_agent_instruction dynamically injects state and footageUrl."""
+    from app.agents.script_agent import script_agent_instruction
+    from google.adk.agents.readonly_context import ReadonlyContext
+
+    mock_context = MagicMock(spec=ReadonlyContext)
+    mock_context.state = {
+        "spec": {
+            "global": {
+                "footageUrl": "footage-small.mp4",
+                "gamingDevice": "Console",
+                "aspectRatio": "9:16",
+            },
+            "script": {
+                "game": "Hero",
+                "gameUrl": "https://hero-game.com",
+                "searchGrounding": True,
+                "cta": "Like and subscribe!",
+                "additionalInstructions": "Relaxed tutorial style",
+            },
+        },
+        "artifacts": {},
+    }
+
+    instruction = script_agent_instruction(mock_context)
+    assert "Registered Gameplay Footage (footageUrl): footage-small.mp4" in instruction
+    assert "Registered Game Name: Hero" in instruction
+    assert "Gaming Platform: Console" in instruction
+    assert "Video Aspect Ratio: 9:16" in instruction
+    assert "Google Search Grounding: Enabled" in instruction
+    assert "Official Game URL: https://hero-game.com" in instruction
+    assert "Call to Action (CTA): Like and subscribe!" in instruction
+    assert "Creative Instructions / Tone: Relaxed tutorial style" in instruction
+    assert "Existing Script Deliverable: None drafted yet" in instruction
+
