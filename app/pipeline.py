@@ -527,7 +527,7 @@ def render_pipeline_kanban(state: dict[str, Any]) -> str:
             f"👉 ACTIVE DIRECTOR FOCUS: Downstream assets {', '.join(out_of_sync_stages)} are OUT OF SYNC with upstream changes!"
         )
         lines.append(
-            "Do NOT forget this. Proactively inform the user that these downstream assets were produced with earlier inputs and guide them to regenerate or re-align them."
+            "Assess user intent (direct modification vs. exploratory research) and apply director principles to resolve out-of-sync deliverables. Keep internal agents invisible."
         )
     elif "composite" in [
         s for s in stages if evaluate_stage_status(s, state)["status"] == "READY"

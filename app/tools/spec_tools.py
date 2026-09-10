@@ -142,8 +142,9 @@ async def update_spec(
         )
         for target, reasons in impacted_targets.items():
             msg_lines.append(f"- [{target}]: {' '.join(reasons)}")
+        targets_list = ", ".join(f"[{t}]" for t in impacted_targets.keys())
         msg_lines.append(
-            "Action: Please inform the user that these existing artifacts were built with earlier parameters and are now out of sync, and ask or invoke the appropriate specialist agent to re-align or regenerate them."
+            f"Deliverables requiring rework: {targets_list}."
         )
 
     return "\n".join(msg_lines)

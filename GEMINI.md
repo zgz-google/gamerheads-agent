@@ -133,11 +133,14 @@ We eliminate artificial "stale" or "approved" state machine flags in favor of a 
   - `gamingDevice` $\rightarrow$ `["script", "avatar", "streamer_video"]`
   - `aspectRatio` $\rightarrow$ `["avatar", "streamer_video", "composite"]`
   - `layout`, `pipPlacement`, `volumes`, `subtitles` $\rightarrow$ `["composite"]`
-- **Smart Downstream Impact Detection**:
+- **Smart Downstream Impact Detection & Coordinator Autonomy Principles**:
   - Both `update_spec` and specialist agents (e.g. `script_agent` when editing/regenerating commentary) call `detect_impact(item, state)` from `app.pipeline`.
   - An alert is reported if an affected downstream deliverable **already exists in state**:
     `⚠️ Downstream Impact Detected (Existing Artifacts Out of Sync)`
-  - The Director naturally asks the user if they wish to re-generate or re-align the affected downstream artifact (e.g., asking if they want a fresh streamer video matching the new commentary lines).
+  - The tool reports which deliverables require rework; the Coordinator autonomously decides the next action based on user intent principles:
+    - **Direct Modification**: When the user explicitly requests an asset/setting change (e.g. changing room setting or commentary tone), the Coordinator automatically reworks the deliverable without redundant confirmation.
+    - **Exploratory / Research**: When the user requests research or exploration first, the Coordinator gathers facts first and then aligns with the user on how to incorporate them.
+    - **Zero Agent Leakage**: Internal specialist agents (e.g. script_agent) are strictly kept internal and never mentioned to the user; the Coordinator communicates as the sole Director.
 
 ### 4. Real-Time Production Kanban & Dynamic Instruction Injection
 
