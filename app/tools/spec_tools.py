@@ -15,60 +15,30 @@
 """Specification Management Tool for GamerHeads Director."""
 
 from collections import defaultdict
-from typing import Any
 
 from google.adk.tools import ToolContext
 
-# ============================================================================
-# Parameter Dependency Graph (DAG)
-# Maps configurable parameters to the downstream artifacts they impact.
-# ============================================================================
-PARAM_DEPENDENCIES: dict[str, dict[str, Any]] = {
-    "footageUrl": {
-        "targets": ["script", "streamer_video"],
-        "reason": "Gameplay video clip changed; commentary duration, scene beat timing, and visual reaction cues need to match the new video.",
-    },
-    "game": {
-        "targets": ["script"],
-        "reason": "Game title changed; commentary gamer terminology, mechanics, and references may need adjustments.",
-    },
-    "gameUrl": {
-        "targets": ["script"],
-        "reason": "Game reference URL changed; gameplay mechanics and official lore grounding may need re-fetching.",
-    },
-    "searchGrounding": {
-        "targets": ["script"],
-        "reason": "Search grounding setting changed; factual research may need re-running.",
-    },
-    "cta": {
-        "targets": ["script"],
-        "reason": "Call-to-action changed; the final commentary segment dialogue should be updated.",
-    },
-    "additionalInstructions": {
-        "targets": ["script"],
-        "reason": "Script creative instructions or commentary tone changed; dialogue and streamer reaction style need updating.",
-    },
-    "gamingDevice": {
-        "targets": ["script", "avatar", "streamer_video"],
-        "reason": "Gaming platform changed (e.g. PC vs Console); player physical actions (hands/controller) and streamer avatar props need alignment.",
-    },
-    "appearance": {
-        "targets": ["avatar", "streamer_video"],
-        "reason": "Streamer visual appearance changed; avatar likeness asset needs regeneration.",
-    },
-    "referenceImageUrl": {
-        "targets": ["avatar", "streamer_video"],
-        "reason": "Avatar reference image changed; visual likeness asset needs regeneration.",
-    },
-    "setting": {
-        "targets": ["avatar", "streamer_video"],
-        "reason": "Streamer background room setting changed; avatar scene backdrop needs regeneration.",
-    },
-    "aspectRatio": {
-        "targets": ["streamer_video"],
-        "reason": "Video aspect ratio changed; composite layout and video composition need re-framing.",
-    },
-}
+from app.pipeline import (
+    ARTIFACT_CASCADE_REASONS,
+    ARTIFACT_DEPENDENCIES,
+    DEFAULT_SPEC_SCOPES,
+    PARAM_DEPENDENCIES,
+    PARAM_SCOPE_MAP,
+    PIPELINE_STAGES,
+    detect_impact,
+    record_spec_param,
+)
+
+__all__ = [
+    "ARTIFACT_CASCADE_REASONS",
+    "ARTIFACT_DEPENDENCIES",
+    "DEFAULT_SPEC_SCOPES",
+    "PARAM_DEPENDENCIES",
+    "PARAM_SCOPE_MAP",
+    "PIPELINE_STAGES",
+    "detect_impact",
+    "update_spec",
+]
 
 
 async def update_spec(
@@ -118,6 +88,13 @@ async def update_spec(
 
     state = tool_context.state
     spec = state.setdefault("spec", {})
+
+    # Initialize default scopes if not already present
+    for scope_name, defaults in DEFAULT_SPEC_SCOPES.items():
+        scope_dict = spec.setdefault(scope_name, {})
+        for def_k, def_v in defaults.items():
+            scope_dict.setdefault(def_k, def_v)
+
     updated = []
     changed_params: list[str] = []
 
@@ -136,9 +113,7 @@ async def update_spec(
 
     for key, val in incoming.items():
         if val is not None:
-            old_val = spec.get(key)
-            if old_val != val:
-                spec[key] = val
+            if record_spec_param(state, key, val):
                 changed_params.append(key)
                 if key == "additionalInstructions":
                     updated.append("additionalInstructions updated")
@@ -147,54 +122,19 @@ async def update_spec(
                         f"{key}='{val}'" if isinstance(val, str) else f"{key}={val}"
                     )
 
-    # Synchronize structured configuration namespaces
-    config = state.setdefault("config", {})
-    config["global"] = {
-        "footageUrl": spec.get("footageUrl"),
-        "gamingDevice": spec.get("gamingDevice", "PC"),
-        "aspectRatio": spec.get("aspectRatio", "16:9"),
-    }
-    config["script"] = {
-        "gameTitle": spec.get("game"),
-        "gameUrl": spec.get("gameUrl"),
-        "searchGrounding": spec.get("searchGrounding", False),
-        "cta": spec.get("cta"),
-        "additionalInstructions": spec.get("additionalInstructions", ""),
-    }
-    config["avatar"] = {
-        "appearance": spec.get("appearance"),
-        "referenceImageUrl": spec.get("referenceImageUrl"),
-        "setting": spec.get("setting"),
-    }
-    config["composite"] = {
-        "layout": spec.get("layout", "pip"),
-        "pipPlacement": spec.get("pipPlacement", "bottom-right"),
-        "stackedPlacement": spec.get("stackedPlacement"),
-        "gameplayVolume": spec.get("gameplayVolume", 0.8),
-        "streamerVolume": spec.get("streamerVolume", 1.0),
-        "subtitles": spec.get("subtitles", True),
-    }
-
     if not updated:
         return "No spec fields provided to update."
 
     msg_lines = [f"Spec updated successfully: {', '.join(updated)}."]
 
-    # Smart Impact Analysis: Only warn if affected artifacts ALREADY EXIST in state
-    existing_artifacts = state.get("artifacts", {})
+    # Smart Impact Analysis: Centralized via detect_impact
     impacted_targets: dict[str, list[str]] = defaultdict(list)
-
     for param in changed_params:
-        dep_info = PARAM_DEPENDENCIES.get(param)
-        if not dep_info:
-            continue
-        targets = dep_info["targets"]
-        reason = dep_info["reason"]
-        for target in targets:
-            # Check if this artifact is already generated/present
-            if existing_artifacts.get(target):
-                if reason not in impacted_targets[target]:
-                    impacted_targets[target].append(reason)
+        impacts = detect_impact(param, state)
+        for target, reasons in impacts.items():
+            for r in reasons:
+                if r not in impacted_targets[target]:
+                    impacted_targets[target].append(r)
 
     if impacted_targets:
         msg_lines.append(

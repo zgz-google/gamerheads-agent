@@ -158,8 +158,9 @@ async def test_update_spec():
     )
     assert "Spec updated successfully" in result
     assert "Downstream Impact Detected" not in result
-    assert mock_context.state["spec"]["footageUrl"] == "gameplay_01.mp4"
-    assert mock_context.state["spec"]["game"] == "Black Myth: Wukong"
+    assert mock_context.state["spec"]["global"]["footageUrl"] == "gameplay_01.mp4"
+    assert mock_context.state["spec"]["script"]["game"] == "Black Myth: Wukong"
+    assert "config" not in mock_context.state
     assert "script_state" not in mock_context.state
     assert "streamer_video_state" not in mock_context.state
 
@@ -171,9 +172,15 @@ async def test_update_spec():
     )
     assert "Spec updated successfully" in result2
     assert "Downstream Impact Detected" not in result2
-    assert mock_context.state["spec"]["referenceImageUrl"] == "cyber_avatar.png"
-    assert mock_context.state["spec"]["appearance"] == "cyberpunk girl with blue hair"
+    assert (
+        mock_context.state["spec"]["avatar"]["referenceImageUrl"] == "cyber_avatar.png"
+    )
+    assert (
+        mock_context.state["spec"]["avatar"]["appearance"]
+        == "cyberpunk girl with blue hair"
+    )
     assert "avatar_state" not in mock_context.state
+    assert "config" not in mock_context.state
 
 
 @pytest.mark.asyncio
@@ -182,8 +189,12 @@ async def test_update_spec_triggers_downstream_impact():
     # Existing artifacts in state
     mock_context.state = {
         "spec": {
-            "footageUrl": "old_footage.mp4",
-            "appearance": "cyberpunk girl",
+            "global": {
+                "footageUrl": "old_footage.mp4",
+            },
+            "avatar": {
+                "appearance": "cyberpunk girl",
+            },
         },
         "artifacts": {
             "script": [{"id": 1, "dialogue": "Let's go!"}],
@@ -214,7 +225,7 @@ async def test_update_spec_triggers_downstream_impact():
     assert "- [streamer_video]" in result2
     assert "- [script]" not in result2
 
-    # 3. Changing additionalInstructions should impact script, but NOT avatar
+    # 3. Changing additionalInstructions should impact script AND streamer_video, but NOT avatar
     result3 = await update_spec(
         additionalInstructions="Make it hyper sarcastic and funny",
         tool_context=mock_context,
@@ -222,9 +233,11 @@ async def test_update_spec_triggers_downstream_impact():
     assert "Spec updated successfully" in result3
     assert "⚠️ Downstream Impact Detected" in result3
     assert "- [script]" in result3
+    assert "- [streamer_video]" in result3
     assert "- [avatar]" not in result3
     assert (
-        mock_context.state["config"]["script"]["additionalInstructions"]
+        mock_context.state["spec"]["script"]["additionalInstructions"]
         == "Make it hyper sarcastic and funny"
     )
-    assert "additionalInstructions" not in mock_context.state["config"]["global"]
+    assert "additionalInstructions" not in mock_context.state["spec"]["global"]
+    assert "config" not in mock_context.state

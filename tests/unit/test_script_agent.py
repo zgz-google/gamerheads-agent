@@ -145,6 +145,45 @@ async def test_edit_script_lines_success():
 
 
 @pytest.mark.asyncio
+async def test_edit_script_lines_triggers_downstream_impact():
+    """Tests that modifying script lines updates script and marks downstream stages OUT_OF_SYNC in kanban."""
+    from app.pipeline import evaluate_stage_status, render_pipeline_kanban
+
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {
+        "artifacts": {
+            "script": {
+                "segments": [
+                    {
+                        "id": 1,
+                        "duration": 5,
+                        "startTime": "00:00",
+                        "endTime": "00:05",
+                        "prompt": "smile",
+                        "dialogue": "hello",
+                    }
+                ],
+                "total_duration": 5,
+                "_updated_at": 100.0,
+            },
+            "avatar": {"image": "avatar.png", "_updated_at": 100.0},
+            "streamer_video": {"url": "rendered_video.mp4", "_updated_at": 100.0},
+        }
+    }
+    edits = [LineEditItem(line=1, dialogue="[Excited] Brand new line!")]
+    res = await edit_script_lines(edits, mock_ctx)
+    assert "Successfully updated line(s) [1]" in res
+    assert "[Excited] Brand new line!" in res
+
+    # Downstream impact is reflected in the centralized pipeline kanban
+    stage3_status = evaluate_stage_status("streamer_video", mock_ctx.state)
+    assert stage3_status["status"] == "OUT_OF_SYNC"
+    kanban = render_pipeline_kanban(mock_ctx.state)
+    assert "Stage 3 [Streamer Video]: ⚠️ OUT_OF_SYNC" in kanban
+    assert "OUT OF SYNC" in kanban
+
+
+@pytest.mark.asyncio
 async def test_edit_script_lines_no_script():
     """Tests error handling when attempting to edit before generating a script."""
     mock_ctx = MagicMock(spec=ToolContext)
@@ -171,10 +210,14 @@ async def test_watch_gameplay_and_generate_script_success():
     mock_ctx = MagicMock(spec=ToolContext)
     mock_ctx.state = {
         "spec": {
-            "footageUrl": "imported_gameplay.mp4",
-            "game": "Apex Legends",
-            "gamingDevice": "PC",
-            "cta": "Subscribe for more",
+            "global": {
+                "footageUrl": "imported_gameplay.mp4",
+                "gamingDevice": "PC",
+            },
+            "script": {
+                "game": "Apex Legends",
+                "cta": "Subscribe for more",
+            },
         }
     }
 
@@ -230,10 +273,14 @@ async def test_watch_gameplay_and_generate_script_with_grounding_propagation():
     mock_ctx = MagicMock(spec=ToolContext)
     mock_ctx.state = {
         "spec": {
-            "footageUrl": "imported_gameplay.mp4",
-            "game": "Apex Legends",
-            "searchGrounding": True,
-            "gameUrl": "https://ea.com/apex",
+            "global": {
+                "footageUrl": "imported_gameplay.mp4",
+            },
+            "script": {
+                "game": "Apex Legends",
+                "searchGrounding": True,
+                "gameUrl": "https://ea.com/apex",
+            },
         }
     }
     mock_part = types.Part(

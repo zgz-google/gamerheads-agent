@@ -29,6 +29,8 @@ from google.adk.tools import ToolContext
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from app.pipeline import record_artifact
+
 load_dotenv()
 
 MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
@@ -295,10 +297,11 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
         A formatted shot list detailing the timing, dialogue, and on-screen actions.
     """
     state = tool_context.state
-    spec = state.get("spec") or state.get("config") or {}
-    footage_target = (
-        spec.get("footageUrl") or spec.get("footage_url") or state.get("footageUrl")
-    )
+    spec = state.get("spec", {})
+    global_spec = spec.get("global", {})
+    script_spec = spec.get("script", {})
+
+    footage_target = global_spec.get("footageUrl")
 
     if not footage_target:
         return (
@@ -345,23 +348,13 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
         )
 
     # 2. Build prompt
-    title = spec.get("game") or spec.get("gameTitle") or spec.get("game_title") or ""
-    cta = spec.get("cta") or ""
-    device = spec.get("gamingDevice") or spec.get("gaming_device") or "PC"
-    additional_notes = (
-        spec.get("additionalInstructions")
-        or state.get("config", {}).get("script", {}).get("additionalInstructions")
-        or spec.get("additional_instructions")
-        or ""
-    )
-    search_grounding = bool(
-        spec.get("searchGrounding")
-        or state.get("config", {}).get("script", {}).get("searchGrounding", False)
-    )
-    game_url = spec.get("gameUrl") or state.get("config", {}).get("script", {}).get(
-        "gameUrl", ""
-    )
-    researched_facts = state.get("researched_facts", "")
+    title = script_spec.get("game", "")
+    cta = script_spec.get("cta", "")
+    device = global_spec.get("gamingDevice", "PC")
+    additional_notes = script_spec.get("additionalInstructions", "")
+    search_grounding = script_spec.get("searchGrounding", False)
+    game_url = script_spec.get("gameUrl", "")
+    researched_facts = ""
 
     user_prompt = build_script_prompt(
         title=title,
@@ -471,17 +464,21 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
     clamped = clamp_segments(raw_segments)
     final_segments = compute_timeline(clamped)
 
-    # 4. Save into session state
-    artifacts = state.setdefault("artifacts", {})
-    artifacts["script"] = {
-        "segments": final_segments,
-        "total_duration": final_segments[-1]["end_seconds"] if final_segments else 0,
-        "device": device,
-        "groundingUrls": grounding_urls,
-    }
-    state["script"] = final_segments
+    # 4. Save deliverables to state["artifacts"]["script"]
+    record_artifact(
+        state,
+        "script",
+        {
+            "segments": final_segments,
+            "total_duration": final_segments[-1]["end_seconds"]
+            if final_segments
+            else 0,
+            "device": device,
+            "groundingUrls": grounding_urls,
+        },
+    )
 
-    # 5. Format return summary
+    # 5. Format return summary & detect downstream impact
     total_dur = final_segments[-1]["end_seconds"] if final_segments else 0
     lines_summary = []
     for s in final_segments:
@@ -532,9 +529,7 @@ async def edit_script_lines(
     """
     state = tool_context.state
     script_artifact = state.get("artifacts", {}).get("script")
-    segments = (
-        script_artifact.get("segments") if script_artifact else state.get("script")
-    )
+    segments = script_artifact.get("segments") if script_artifact else None
 
     if not segments or not isinstance(segments, list):
         return "Error: There is no script to edit yet. Call watch_gameplay_and_generate_script first."
@@ -554,9 +549,11 @@ async def edit_script_lines(
 
     # Write back
     if script_artifact:
-        script_artifact["segments"] = segments
-        state["artifacts"]["script"] = script_artifact
-    state["script"] = segments
+        if isinstance(script_artifact, dict):
+            script_artifact["segments"] = segments
+            record_artifact(state, "script", script_artifact)
+        else:
+            record_artifact(state, "script", segments)
 
     lines_summary = []
     for s in segments:
