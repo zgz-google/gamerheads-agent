@@ -291,7 +291,7 @@ async def generate_golden_anchor_avatar(tool_context: ToolContext) -> str:
 
     # 5. Save generated image into ADK Artifact Service
     ext = "jpg" if "jpeg" in out_mime.lower() else "png"
-    filename = f"avatar_{uuid.uuid4().hex[:8]}.{ext}"
+    filename = f"output_avatar_{uuid.uuid4().hex[:8]}.{ext}"
     artifact_part = types.Part(
         inline_data=types.Blob(
             mime_type=out_mime,

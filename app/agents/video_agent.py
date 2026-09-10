@@ -288,7 +288,7 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
         with open(concat_output_path, "rb") as f:
             final_bytes = f.read()
 
-        artifact_name = f"streamer_video_{uuid.uuid4().hex[:8]}.mp4"
+        artifact_name = f"output_streamer_video_{uuid.uuid4().hex[:8]}.mp4"
         part = types.Part(
             inline_data=types.Blob(
                 mime_type="video/mp4",
@@ -423,7 +423,7 @@ async def generate_composite_video(tool_context: ToolContext) -> str:
         with open(output_composite_path, "rb") as f:
             final_bytes = f.read()
 
-        composite_artifact_name = f"final_video_{uuid.uuid4().hex[:8]}.mp4"
+        composite_artifact_name = f"output_composite_{uuid.uuid4().hex[:8]}.mp4"
         part = types.Part(
             inline_data=types.Blob(
                 mime_type="video/mp4",

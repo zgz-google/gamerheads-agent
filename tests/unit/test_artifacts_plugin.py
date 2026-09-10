@@ -28,6 +28,9 @@ def test_app_and_agent_configuration():
     # Check plugin registered on app
     plugin_types = [type(p) for p in app.plugins]
     assert SaveFilesAsArtifactsPlugin in plugin_types
+    from app.plugins.artifact_filter_plugin import DeliverableArtifactFilterPlugin
+
+    assert DeliverableArtifactFilterPlugin in plugin_types
 
     # Check load_artifacts tool on root_agent
     tool_names = [

@@ -245,7 +245,7 @@ async def test_generate_golden_anchor_avatar_success():
     assert "Gaming Platform: PC" in res
     assert mock_ctx.save_artifact.called
     saved_filename, saved_part = mock_ctx.save_artifact.call_args[0]
-    assert saved_filename.startswith("avatar_")
+    assert saved_filename.startswith("output_avatar_")
     assert saved_part.inline_data.data == b"fake_avatar_png_bytes"
 
     # Check state deliverable

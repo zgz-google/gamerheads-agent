@@ -26,6 +26,8 @@ from google.genai import types
 from google.adk.plugins.save_files_as_artifacts_plugin import SaveFilesAsArtifactsPlugin
 from google.adk.tools import AgentTool, load_artifacts
 
+from app.plugins.artifact_filter_plugin import DeliverableArtifactFilterPlugin
+
 from app.agents.avatar_agent import avatar_agent
 from app.agents.script_agent import script_agent
 from app.agents.video_agent import video_agent
@@ -211,5 +213,8 @@ root_agent = Agent(
 app = App(
     root_agent=root_agent,
     name="app",
-    plugins=[SaveFilesAsArtifactsPlugin()],
+    plugins=[
+        SaveFilesAsArtifactsPlugin(),
+        DeliverableArtifactFilterPlugin(),
+    ],
 )

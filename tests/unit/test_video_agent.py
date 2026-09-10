@@ -415,6 +415,7 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
             "artifact_name"
         ]
         assert streamer_art_name in saved_artifacts
+        assert streamer_art_name.startswith("output_streamer_video_")
 
         # 2. Run Stage 4: generate_composite_video
         res_comp = await generate_composite_video(mock_ctx)
@@ -422,3 +423,4 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
         assert "composite" in mock_ctx.state["artifacts"]
         comp_art_name = mock_ctx.state["artifacts"]["composite"]["artifact_name"]
         assert comp_art_name in saved_artifacts
+        assert comp_art_name.startswith("output_composite_")
