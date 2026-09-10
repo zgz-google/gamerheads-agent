@@ -33,7 +33,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-OMNI_MODEL = os.getenv("OMNI_MODEL", "gemini-omni-flash-preview")
+OMNI_MODEL = os.getenv("OMNI_MODEL", "gemini-omni-1.1-flash-preview")
 MAX_ATTEMPTS = 3
 ATTEMPT_TIMEOUT_SECONDS = 180
 # The generated clip is fetched separately from the interaction that produced it,
