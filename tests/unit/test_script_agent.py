@@ -330,7 +330,30 @@ def test_script_agent_attributes():
         getattr(t, "__name__", None) or getattr(t, "name", "")
         for t in script_agent.tools
     ]
-    assert tool_names == ["watch_gameplay_and_generate_script", "edit_script_lines"]
+    assert tool_names == [
+        "update_script_spec",
+        "watch_gameplay_and_generate_script",
+        "edit_script_lines",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_script_spec():
+    """Verifies update_script_spec updates script spec in session state."""
+    from app.tools.spec_tools import update_script_spec
+
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {"spec": {"script": {}}}
+    res = await update_script_spec(
+        game="Apex Legends",
+        cta="Subscribe for part 2",
+        additionalInstructions="High energy",
+        tool_context=mock_ctx,
+    )
+    assert "Spec updated successfully" in res
+    assert mock_ctx.state["spec"]["script"]["game"] == "Apex Legends"
+    assert mock_ctx.state["spec"]["script"]["cta"] == "Subscribe for part 2"
+    assert mock_ctx.state["spec"]["script"]["additionalInstructions"] == "High energy"
 
 
 def test_build_script_prompt_search_grounding():
@@ -355,8 +378,9 @@ def test_build_script_prompt_search_grounding():
 
 def test_script_agent_instruction_dynamic_injection():
     """Tests that script_agent_instruction dynamically injects state and footageUrl."""
-    from app.agents.script_agent import script_agent_instruction
     from google.adk.agents.readonly_context import ReadonlyContext
+
+    from app.agents.script_agent import script_agent_instruction
 
     mock_context = MagicMock(spec=ReadonlyContext)
     mock_context.state = {
@@ -388,3 +412,52 @@ def test_script_agent_instruction_dynamic_injection():
     assert "Creative Instructions / Tone: Relaxed tutorial style" in instruction
     assert "Existing Script Deliverable: None drafted yet" in instruction
 
+
+def test_script_agent_instruction_with_existing_script_artifact():
+    """Tests that script_agent_instruction dynamically injects shot list and dialogue from artifact."""
+    from google.adk.agents.readonly_context import ReadonlyContext
+
+    from app.agents.script_agent import script_agent_instruction
+
+    mock_context = MagicMock(spec=ReadonlyContext)
+    mock_context.state = {
+        "spec": {
+            "global": {"footageUrl": "clip.mp4", "gamingDevice": "PC"},
+            "script": {"game": "Elden Ring"},
+        },
+        "artifacts": {
+            "script": {
+                "segments": [
+                    {
+                        "id": 1,
+                        "startTime": "00:00",
+                        "endTime": "00:04",
+                        "duration": 4,
+                        "prompt": "Leans forward intently watching screen",
+                        "dialogue": "Watch this boss encounter!",
+                    },
+                    {
+                        "id": 2,
+                        "startTime": "00:04",
+                        "endTime": "00:09",
+                        "duration": 5,
+                        "prompt": "Smiles and taps desk in excitement",
+                        "dialogue": "That dodge was flawless! [Laughing]",
+                    },
+                ],
+                "total_duration": 9,
+            }
+        },
+    }
+
+    instruction = script_agent_instruction(mock_context)
+    assert (
+        "Existing Script Deliverable: Present in session (2 segments, 9s total duration)"
+        in instruction
+    )
+    assert "Current Commentary Shot List:" in instruction
+    assert "Line 1 [00:00 - 00:04 (4s)]:" in instruction
+    assert "Action: Leans forward intently watching screen" in instruction
+    assert 'Dialogue: "Watch this boss encounter!"' in instruction
+    assert "Line 2 [00:04 - 00:09 (5s)]:" in instruction
+    assert 'Dialogue: "That dodge was flawless! [Laughing]"' in instruction

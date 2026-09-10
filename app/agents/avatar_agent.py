@@ -29,7 +29,8 @@ from google.adk.models import Gemini
 from google.adk.tools import ToolContext
 from google.genai import types
 
-from app.pipeline import record_artifact
+from app.pipeline import evaluate_stage_status, record_artifact
+from app.tools.spec_tools import update_avatar_spec
 
 load_dotenv()
 
@@ -102,7 +103,9 @@ def script_device_avatar_rules(device: str) -> tuple[str, str, str]:
     elif device == "Hands-free (No device)":
         action = "\n- Setting: Streamer is sitting in their streaming room, hands completely empty and free."
         gaze = "- Gaze: Streamer looks DIRECTLY into the camera lens with engaging eye contact."
-        negative = "No controllers, no keyboards, no mouse, no desk blocking view, no phones."
+        negative = (
+            "No controllers, no keyboards, no mouse, no desk blocking view, no phones."
+        )
     else:  # Default to PC
         action = "\n- Setting: Streamer is at a gaming desk setup with keyboard and mouse visible in foreground."
         negative = "No handheld game controllers, no mobile phones, no gamepads."
@@ -123,28 +126,24 @@ def build_avatar_prompt(
     - Reference persona consistency when reference image is provided.
     - Platform-specific gaze, action, and negative constraints.
     """
-    action_instruction, gaze_instruction, negative_extra = script_device_avatar_rules(device)
+    action_instruction, gaze_instruction, negative_extra = script_device_avatar_rules(
+        device
+    )
 
     identity_line = (
         "\nMaintain consistent identity and facial features with the reference image."
         if has_reference_image
         else ""
     )
-    final_appearance = (
-        appearance.strip()
-        or (
-            "Consistent with reference persona"
-            if has_reference_image
-            else "Energetic young adult gamer in modern gaming attire"
-        )
+    final_appearance = appearance.strip() or (
+        "Consistent with reference persona"
+        if has_reference_image
+        else "Energetic young adult gamer in modern gaming attire"
     )
-    final_setting = (
-        setting.strip()
-        or (
-            "Professional streaming room with warm accent lighting"
-            if has_reference_image
-            else "Modern streaming room with RGB accent glow and gaming gear"
-        )
+    final_setting = setting.strip() or (
+        "Professional streaming room with warm accent lighting"
+        if has_reference_image
+        else "Modern streaming room with RGB accent glow and gaming gear"
     )
 
     return f"""Professional gaming livestreamer avatar portrait.
@@ -217,7 +216,8 @@ async def generate_golden_anchor_avatar(tool_context: ToolContext) -> str:
             pass
 
         if not ref_bytes and (
-            ref_image_target.startswith("http://") or ref_image_target.startswith("https://")
+            ref_image_target.startswith("http://")
+            or ref_image_target.startswith("https://")
         ):
             try:
                 async with aiohttp.ClientSession() as session:
@@ -256,9 +256,13 @@ async def generate_golden_anchor_avatar(tool_context: ToolContext) -> str:
             config=types.GenerateContentConfig(
                 temperature=0.5,
                 response_modalities=["IMAGE", "TEXT"],
-                image_config=types.ImageConfig(aspect_ratio=aspect_ratio, image_size="1K"),
+                image_config=types.ImageConfig(
+                    aspect_ratio=aspect_ratio, image_size="1K"
+                ),
                 safety_settings=SAFETY_BLOCK_NONE,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
             ),
         )
 
@@ -327,22 +331,39 @@ async def generate_golden_anchor_avatar(tool_context: ToolContext) -> str:
 # ============================================================================
 
 AVATAR_AGENT_INSTRUCTION = """You are the expert Character Designer and Art Director (AvatarAgent).
-Your sole purpose is creating and refining the streamer's "Golden Anchor" portrait image.
+Your sole purpose is creating and refining the streamer's "Golden Anchor" portrait image and managing the avatar visual specification (appearance, referenceImageUrl, setting).
 
 【THE GOLDEN ANCHOR CONTRACT】
 - In GamerHeads' Diamond DAG, the Golden Anchor avatar is Stage 2.
 - The avatar image serves as the conditioning anchor (<Image0>) for all subsequent reaction video clips rendered in Stage 3.
 - It locks in the streamer's facial identity, hair/clothing, room aesthetic, and device posture.
 
-【PREREQUISITES】
-- Generating an avatar requires either:
+【DOMAIN SPEC OWNERSHIP (spec.avatar)】
+- You own the avatar visual specification:
+  * `appearance`: Visual description of the streamer (e.g. 'purple cat in a hoodie', 'energetic esports player with red headset').
+  * `referenceImageUrl`: Artifact name or URL of a visual likeness reference image.
+  * `setting`: Streamer room or background environment (e.g. 'Cozy cyberpunk loft with neon signs', 'Dim hacker room with multiple glowing monitors').
+- When the user's request provides, clarifies, or modifies any of these avatar attributes, ALWAYS call `update_avatar_spec` first to persist the parameters into session state.
+
+【PREREQUISITES FOR IMAGE GENERATION】
+- Generating an avatar portrait requires either:
   1) A text description of the streamer's appearance (`appearance`), OR
   2) A visual likeness reference image (`referenceImageUrl`).
-- If neither is available in session state, inform the Director (Coordinator) that streamer appearance or a reference image is required, so the Director can ask the user.
+- If neither is available in session state and none is provided in the current request:
+  -> If the user provided a room `setting`, call `update_avatar_spec(setting=...)` to lock in the background setting.
+  -> Then inform the Director that streamer appearance or a reference image is required, so the Director can ask the user.
 
-【TOOL USAGE】
-- Call `generate_golden_anchor_avatar` to generate or re-generate the Golden Anchor portrait.
-- After generation, provide a clear, enthusiastic summary of the avatar's visual style and platform setup back to the Director.
+【TOOL USAGE & EXECUTION POLICY】
+1. `update_avatar_spec`: Call to record or update `appearance`, `referenceImageUrl`, and/or `setting` in session state.
+2. `generate_golden_anchor_avatar`: Call to generate or re-generate the Golden Anchor portrait.
+3. Decision Workflow:
+   - When the user provides or tweaks an avatar setting (e.g. "背景换成赛博朋克风", "形象改成穿白衬衫的少年"):
+     a) Call `update_avatar_spec(...)` with the new/updated values.
+     b) If an avatar deliverable ALREADY exists in session state (Direct Modification intent) OR if the user explicitly asked to generate/draw the avatar:
+        Immediately call `generate_golden_anchor_avatar` to re-generate the portrait matching the new setting!
+     c) If NO avatar deliverable exists yet and the user was only specifying/exploring concepts without asking to draw:
+        Do NOT generate yet; confirm the updated setting back to the Director.
+   - After generation, provide a clear, enthusiastic summary of the avatar's visual style, background, and platform setup back to the Director.
 """
 
 
@@ -364,7 +385,7 @@ def avatar_agent_instruction(context: ReadonlyContext) -> str:
         "【CURRENT AVATAR SPEC & SESSION STATE】",
         f"- Appearance: {appearance or 'None (Not specified yet)'}",
         f"- Reference Image: {ref_image_url or 'None'}",
-        f"- Room Setting: {setting or 'Default aesthetic'}",
+        f"- Room Setting: {setting or 'None'}",
         f"- Gaming Platform: {gaming_device}",
         f"- Aspect Ratio: {aspect_ratio}",
     ]
@@ -375,7 +396,27 @@ def avatar_agent_instruction(context: ReadonlyContext) -> str:
             if isinstance(existing, dict)
             else "present"
         )
-        status_lines.append(f"- Existing Avatar Deliverable: {art_name} (Ready)")
+        av_eval = evaluate_stage_status("avatar", state)
+        sync_tag = (
+            f" (⚠️ OUT OF SYNC: {av_eval['summary']})"
+            if av_eval["status"] == "OUT_OF_SYNC"
+            else " (Ready)"
+        )
+        status_lines.append(f"- Existing Avatar Deliverable: {art_name}{sync_tag}")
+        if isinstance(existing, dict):
+            status_lines.append("  * Current Deliverable Details:")
+            if "appearance" in existing:
+                status_lines.append(f"    - Appearance: {existing.get('appearance')}")
+            if "setting" in existing:
+                status_lines.append(f"    - Setting: {existing.get('setting')}")
+            if "gamingDevice" in existing:
+                status_lines.append(
+                    f"    - Gaming Platform: {existing.get('gamingDevice')}"
+                )
+            if "aspectRatio" in existing:
+                status_lines.append(
+                    f"    - Aspect Ratio: {existing.get('aspectRatio')}"
+                )
     else:
         status_lines.append("- Existing Avatar Deliverable: None created yet")
 
@@ -391,6 +432,7 @@ avatar_agent = Agent(
     ),
     instruction=avatar_agent_instruction,
     tools=[
+        update_avatar_spec,
         generate_golden_anchor_avatar,
     ],
 )

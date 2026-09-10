@@ -115,7 +115,6 @@ async def ingest_url_to_artifact(url: str, tool_context: ToolContext) -> str:
     - ONLY call this tool if the user explicitly provided a real URL or Google Drive link in their message.
     - NEVER invent, guess, or hallucinate URLs (e.g. placeholder domains, dummy URLs, or fake Google Drive IDs).
     - If the user asks you to look at, review, or evaluate an image or video but did not provide a URL or file, DO NOT call this tool; ask the user to provide the link or upload the file.
-    - After this tool successfully saves the artifact, use `load_artifacts` to inspect it or `update_spec` to register its role.
 
     Args:
         url: The actual external URL or Google Drive link explicitly provided by the user. Do NOT invent or pass a hallucinated URL.
@@ -208,8 +207,7 @@ async def ingest_url_to_artifact(url: str, tool_context: ToolContext) -> str:
             f"- Artifact Name: {filename}\n"
             f"- MIME Type: {mime_type}\n"
             f"- Size: {size_mb:.2f} MB\n"
-            f"You can now call `load_artifacts(artifact_names=['{filename}'])` to inspect its visual contents, "
-            f"and call `update_spec` to register its role (e.g. footageUrl='{filename}' or referenceImageUrl='{filename}')."
+            f"You can now call `load_artifacts(artifact_names=['{filename}'])` to inspect its visual contents."
         )
 
     except aiohttp.ClientConnectorError as e:

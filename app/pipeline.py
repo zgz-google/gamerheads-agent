@@ -235,13 +235,15 @@ def record_spec_param(
     """
     if now is None:
         now = time.time()
-    spec = state.setdefault("spec", {})
+    spec = dict(state.get("spec", {}))
     scope = PARAM_SCOPE_MAP.get(key, "global")
-    scope_dict = spec.setdefault(scope, {})
+    scope_dict = dict(spec.get(scope, {}))
     old_val = scope_dict.get(key)
     if old_val != val:
         scope_dict[key] = val
         scope_dict["_updated_at"] = now
+        spec[scope] = scope_dict
+        state["spec"] = spec
         return True
     return False
 
@@ -255,12 +257,13 @@ def record_artifact(
     """Stores an artifact deliverable in state['artifacts'] with timestamp metadata."""
     if now is None:
         now = time.time()
-    artifacts = state.setdefault("artifacts", {})
+    artifacts = dict(state.get("artifacts", {}))
     if isinstance(artifact_data, dict):
         artifact_data["_updated_at"] = now
         artifacts[artifact_name] = artifact_data
     else:
         artifacts[artifact_name] = artifact_data
+    state["artifacts"] = artifacts
 
 
 def get_artifact_timestamp(artifact: Any) -> float | None:
@@ -520,6 +523,61 @@ def render_pipeline_kanban(state: dict[str, Any]) -> str:
         lines.append(
             f"- Stage {stage_num} [{stage_name}]: {emoji} {status} - {summary}"
         )
+
+        # Embed Deliverable details directly under each stage card
+        artifacts = state.get("artifacts", {})
+        if stage_key in artifacts:
+            art_val = artifacts[stage_key]
+            stale_tag = " (⚠️ Stale - Out of sync)" if status == "OUT_OF_SYNC" else ""
+            if stage_key == "script":
+                segs = (
+                    art_val.get("segments", [])
+                    if isinstance(art_val, dict)
+                    else (art_val if isinstance(art_val, list) else [])
+                )
+                total_dur = (
+                    art_val.get(
+                        "total_duration",
+                        segs[-1].get("end_seconds", 0) if segs else 0,
+                    )
+                    if isinstance(art_val, dict) and segs
+                    else 0
+                )
+                lines.append(
+                    f"  * Deliverable{stale_tag}: {len(segs)} commentary segments ({total_dur}s total)"
+                )
+                for s in segs:
+                    dialogue = s.get("dialogue", "")
+                    diag_str = f': "{dialogue}"' if dialogue else ""
+                    lines.append(
+                        f"    - Line {s.get('id')} [{s.get('startTime', '00:00')} - {s.get('endTime', '00:00')}]{diag_str}"
+                    )
+            elif stage_key == "avatar":
+                if isinstance(art_val, dict):
+                    art_fn = art_val.get("artifact_name", "avatar.png")
+                    lines.append(f"  * Deliverable{stale_tag}: {art_fn}")
+                    if "appearance" in art_val:
+                        lines.append(f"    - Appearance: {art_val.get('appearance')}")
+                    if "setting" in art_val:
+                        lines.append(f"    - Room Setting: {art_val.get('setting')}")
+                else:
+                    lines.append(f"  * Deliverable{stale_tag}: {art_val}")
+            elif stage_key == "streamer_video":
+                sv_name = (
+                    art_val.get("artifact_name", "streamer_video.mp4")
+                    if isinstance(art_val, dict)
+                    else str(art_val)
+                )
+                lines.append(f"  * Deliverable{stale_tag}: {sv_name}")
+            elif stage_key == "composite":
+                comp_name = (
+                    art_val.get("artifact_name", "composite_final.mp4")
+                    if isinstance(art_val, dict)
+                    else str(art_val)
+                )
+                lines.append(f"  * Deliverable{stale_tag}: {comp_name}")
+        else:
+            lines.append("  * Deliverable: None created yet")
 
     lines.append("--------------------------------------------------")
     if has_out_of_sync:

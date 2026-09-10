@@ -24,7 +24,11 @@ from app.tools.ingest_tools import (
     ingest_url_to_artifact,
     parse_google_drive_download_url,
 )
-from app.tools.spec_tools import update_spec
+from app.tools.spec_tools import (
+    update_avatar_spec,
+    update_global_spec,
+    update_script_spec,
+)
 
 
 def test_parse_google_drive_download_url():
@@ -146,26 +150,32 @@ async def test_ingest_url_to_artifact_permission_denied():
 
 
 @pytest.mark.asyncio
-async def test_update_spec():
+async def test_domain_spec_updates():
     mock_context = MagicMock(spec=ToolContext)
     mock_context.state = {}
 
-    # Initial spec update with footage (no artifacts yet)
-    result = await update_spec(
+    # Initial spec update with footage (global)
+    result = await update_global_spec(
         footageUrl="gameplay_01.mp4",
-        game="Black Myth: Wukong",
         tool_context=mock_context,
     )
     assert "Spec updated successfully" in result
     assert "Downstream Impact Detected" not in result
     assert mock_context.state["spec"]["global"]["footageUrl"] == "gameplay_01.mp4"
+
+    # Script spec update
+    result_script = await update_script_spec(
+        game="Black Myth: Wukong",
+        tool_context=mock_context,
+    )
+    assert "Spec updated successfully" in result_script
     assert mock_context.state["spec"]["script"]["game"] == "Black Myth: Wukong"
     assert "config" not in mock_context.state
     assert "script_state" not in mock_context.state
     assert "streamer_video_state" not in mock_context.state
 
-    # Subsequent update with avatar reference image (still no artifacts)
-    result2 = await update_spec(
+    # Subsequent update with avatar reference image (avatar)
+    result2 = await update_avatar_spec(
         referenceImageUrl="cyber_avatar.png",
         appearance="cyberpunk girl with blue hair",
         tool_context=mock_context,
@@ -184,7 +194,7 @@ async def test_update_spec():
 
 
 @pytest.mark.asyncio
-async def test_update_spec_triggers_downstream_impact():
+async def test_domain_spec_triggers_downstream_impact():
     mock_context = MagicMock(spec=ToolContext)
     # Existing artifacts in state
     mock_context.state = {
@@ -204,7 +214,7 @@ async def test_update_spec_triggers_downstream_impact():
     }
 
     # 1. Changing footageUrl should impact script and streamer_video, but NOT avatar
-    result = await update_spec(
+    result = await update_global_spec(
         footageUrl="new_footage.mp4",
         tool_context=mock_context,
     )
@@ -215,7 +225,7 @@ async def test_update_spec_triggers_downstream_impact():
     assert "- [avatar]" not in result
 
     # 2. Changing appearance should impact avatar and streamer_video, but NOT script
-    result2 = await update_spec(
+    result2 = await update_avatar_spec(
         appearance="retro pixel hero",
         tool_context=mock_context,
     )
@@ -226,7 +236,7 @@ async def test_update_spec_triggers_downstream_impact():
     assert "- [script]" not in result2
 
     # 3. Changing additionalInstructions should impact script AND streamer_video, but NOT avatar
-    result3 = await update_spec(
+    result3 = await update_script_spec(
         additionalInstructions="Make it hyper sarcastic and funny",
         tool_context=mock_context,
     )
@@ -234,10 +244,49 @@ async def test_update_spec_triggers_downstream_impact():
     assert "⚠️ Downstream Impact Detected" in result3
     assert "- [script]" in result3
     assert "- [streamer_video]" in result3
-    assert "- [avatar]" not in result3
+    assert "- [avatar]" not in result
     assert (
         mock_context.state["spec"]["script"]["additionalInstructions"]
         == "Make it hyper sarcastic and funny"
     )
     assert "additionalInstructions" not in mock_context.state["spec"]["global"]
     assert "config" not in mock_context.state
+
+
+@pytest.mark.asyncio
+async def test_domain_spec_adk_state_delta():
+    """Verify that domain spec tools emit state_delta to ADK State object."""
+    from google.adk.events import EventActions
+    from google.adk.sessions.state import State
+
+    actions = EventActions()
+    session_data = {"spec": {"global": {"footageUrl": "old.mp4"}}}
+    state = State(value=session_data, delta=actions.state_delta)
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = state
+    mock_ctx.actions = actions
+
+    res = await update_script_spec(game="Apex Legends", tool_context=mock_ctx)
+    assert "Spec updated successfully" in res
+    assert "spec" in actions.state_delta
+    assert actions.state_delta["spec"]["script"]["game"] == "Apex Legends"
+    assert actions.state_delta["spec"]["global"]["footageUrl"] == "old.mp4"
+
+
+@pytest.mark.asyncio
+async def test_update_global_spec():
+    """Verify that update_global_spec updates only global spec."""
+    from app.tools.spec_tools import update_global_spec
+
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {"spec": {"global": {}}}
+    res = await update_global_spec(
+        footageUrl="clip.mp4",
+        gamingDevice="Console",
+        aspectRatio="9:16",
+        tool_context=mock_ctx,
+    )
+    assert "Spec updated successfully" in res
+    assert mock_ctx.state["spec"]["global"]["footageUrl"] == "clip.mp4"
+    assert mock_ctx.state["spec"]["global"]["gamingDevice"] == "Console"
+    assert mock_ctx.state["spec"]["global"]["aspectRatio"] == "9:16"

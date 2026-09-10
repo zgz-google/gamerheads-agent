@@ -134,7 +134,7 @@ We eliminate artificial "stale" or "approved" state machine flags in favor of a 
   - `aspectRatio` $\rightarrow$ `["avatar", "streamer_video", "composite"]`
   - `layout`, `pipPlacement`, `volumes`, `subtitles` $\rightarrow$ `["composite"]`
 - **Smart Downstream Impact Detection & Coordinator Autonomy Principles**:
-  - Both `update_spec` and specialist agents (e.g. `script_agent` when editing/regenerating commentary) call `detect_impact(item, state)` from `app.pipeline`.
+  - Domain spec tools (`update_global_spec`, `update_avatar_spec`, `update_script_spec`) and specialist agents (e.g. `script_agent` when editing/regenerating commentary) call `detect_impact(item, state)` from `app.pipeline`.
   - An alert is reported if an affected downstream deliverable **already exists in state**:
     `⚠️ Downstream Impact Detected (Existing Artifacts Out of Sync)`
   - The tool reports which deliverables require rework; the Coordinator autonomously decides the next action based on user intent principles:
@@ -144,14 +144,14 @@ We eliminate artificial "stale" or "approved" state machine flags in favor of a 
 
 ### 4. Real-Time Production Kanban & Dynamic Instruction Injection
 
-To prevent the Director from "forgetting" pending remakes or remaining pipeline stages across multi-turn interactions:
-- **`render_pipeline_kanban(state)`**: Evaluates each stage status (`READY`, `OUT_OF_SYNC`, `PENDING`, `BLOCKED`) based on `context.state` and timestamp comparison (`_updated_at`).
-- **Dynamic Instruction Provider**: In `app/agent.py`, `root_agent` uses ADK's native `instruction=director_instruction(context: ReadonlyContext)`.
-- On **every single turn**, the current Kanban dashboard and active director focus are injected into the model's system prompt, ensuring zero context decay and immediate visibility of all out-of-sync downstream assets.
+To prevent the Director from "forgetting" pending remakes, remaining pipeline stages, or generated deliverable details across multi-turn interactions:
+- **`render_pipeline_kanban(state)`**: Evaluates each stage status (`READY`, `OUT_OF_SYNC`, `PENDING`, `BLOCKED`) based on `context.state` and timestamp comparison (`_updated_at`), and **directly embeds each stage's deliverables / artifacts** (commentary lines, avatar metadata, video files) directly under the stage card, tagging stale assets explicitly (`(⚠️ Stale - Out of sync)`).
+- **Dynamic Instruction Provider**: In `app/agent.py`, `root_agent` uses ADK's native `instruction=director_instruction(context: ReadonlyContext)` to inject global spec ownership (`footageUrl`, `gamingDevice`, `aspectRatio`) and the unified real-time Kanban.
+- On **every single turn**, the current unified Kanban dashboard and active director focus are injected into the model's system prompt, ensuring zero context decay and immediate visibility of all out-of-sync downstream assets.
 
 ### 5. Single Source of Truth & Explicit Set/Get
 
-- **One Way In**: The Coordinator / Director calls `update_spec(key=val, ...)` with flat, natural arguments. The tool's internal `PARAM_SCOPE_MAP` programmatically routes them into `spec[scope][key]`.
+- **One Way In**: The Coordinator / Director calls `update_global_spec(...)` for global parameters (`footageUrl`, `gamingDevice`, `aspectRatio`), while specialist domain agents call their respective domain tools (`update_avatar_spec`, `update_script_spec`). The tool's internal `PARAM_SCOPE_MAP` programmatically routes them into `spec[scope][key]` and triggers ADK state deltas.
 - **Explicit Get**: Downstream specialist agents read exact keys directly from their domain scope (e.g. `spec.get("script", {}).get("game", "")`) with no defensive `or` fallback chains.
 - **One Way Out**: Generators write their deliverables directly to `state["artifacts"][target]` via `record_artifact(state, target, data)`.
 

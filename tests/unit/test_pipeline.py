@@ -14,6 +14,8 @@
 
 """Unit tests for the centralized PipelineManager."""
 
+import pytest
+
 from app.pipeline import (
     PIPELINE_STAGES,
     detect_impact,
@@ -160,3 +162,137 @@ def test_render_pipeline_kanban():
     assert "Stage 3 [Streamer Video]: ⚠️ OUT_OF_SYNC" in kanban
     assert "ACTIVE DIRECTOR FOCUS" in kanban
     assert "OUT OF SYNC" in kanban
+
+
+@pytest.mark.asyncio
+async def test_adk_state_delta_tracking():
+    """Verify that record_spec_param and record_artifact emit state_delta on ADK State across turns."""
+    from google.adk.events import Event, EventActions
+    from google.adk.sessions.in_memory_session_service import InMemorySessionService
+    from google.adk.sessions.state import State
+
+    service = InMemorySessionService()
+    await service.create_session(app_name="app", user_id="u1", session_id="s1")
+
+    # Turn 1: update footageUrl and record artifact
+    sess1 = await service.get_session(app_name="app", user_id="u1", session_id="s1")
+    actions1 = EventActions()
+    state1 = State(value=sess1.state, delta=actions1.state_delta)
+    record_spec_param(state1, "footageUrl", "clip.mp4", now=100.0)
+    record_artifact(state1, "avatar", {"artifact_name": "avatar.png"}, now=100.0)
+
+    assert "spec" in actions1.state_delta
+    assert "artifacts" in actions1.state_delta
+    ev1 = Event(author="test", actions=actions1)
+    await service.append_event(session=sess1, event=ev1)
+
+    # Turn 2: update additionalInstructions and avatar artifact
+    sess2 = await service.get_session(app_name="app", user_id="u1", session_id="s1")
+    assert sess2.state["spec"]["global"]["footageUrl"] == "clip.mp4"
+    assert sess2.state["artifacts"]["avatar"]["artifact_name"] == "avatar.png"
+
+    actions2 = EventActions()
+    state2 = State(value=sess2.state, delta=actions2.state_delta)
+    record_spec_param(state2, "additionalInstructions", "hype commentary", now=200.0)
+    record_artifact(state2, "avatar", {"artifact_name": "avatar_v2.png"}, now=200.0)
+
+    assert "spec" in actions2.state_delta
+    assert (
+        actions2.state_delta["spec"]["script"]["additionalInstructions"]
+        == "hype commentary"
+    )
+    assert "artifacts" in actions2.state_delta
+    assert (
+        actions2.state_delta["artifacts"]["avatar"]["artifact_name"] == "avatar_v2.png"
+    )
+
+    ev2 = Event(author="test", actions=actions2)
+    await service.append_event(session=sess2, event=ev2)
+
+    # Verify storage session now contains both updates
+    sess3 = await service.get_session(app_name="app", user_id="u1", session_id="s1")
+    assert sess3.state["spec"]["global"]["footageUrl"] == "clip.mp4"
+    assert sess3.state["spec"]["script"]["additionalInstructions"] == "hype commentary"
+    assert sess3.state["artifacts"]["avatar"]["artifact_name"] == "avatar_v2.png"
+
+
+def test_director_instruction_dynamic_injection():
+    """Verify that director_instruction injects global spec, artifacts, and kanban."""
+    from unittest.mock import MagicMock
+
+    from google.adk.agents.readonly_context import ReadonlyContext
+
+    from app.agent import director_instruction
+
+    mock_ctx = MagicMock(spec=ReadonlyContext)
+    mock_ctx.state = {
+        "spec": {
+            "global": {
+                "footageUrl": "gameplay_epic.mp4",
+                "gamingDevice": "Console",
+                "aspectRatio": "9:16",
+            },
+            "script": {"game": "Apex Legends"},
+        },
+        "artifacts": {
+            "script": {
+                "segments": [{"id": 1, "duration": 5}],
+                "total_duration": 5,
+            },
+            "avatar": {"artifact_name": "anchor_01.png"},
+        },
+    }
+
+    instruction = director_instruction(mock_ctx)
+    assert "【CURRENT GLOBAL SPEC (OWNED BY COORDINATOR)】" in instruction
+    assert "Gameplay Footage (footageUrl): gameplay_epic.mp4" in instruction
+    assert "Gaming Platform (gamingDevice): Console" in instruction
+    assert "Video Aspect Ratio (aspectRatio): 9:16" in instruction
+    assert "【PRODUCTION PIPELINE REAL-TIME KANBAN】" in instruction
+    assert "Stage 1 [Commentary Script]: ✅ READY" in instruction
+    assert "Deliverable: 1 commentary segments (5s total)" in instruction
+    assert "Stage 2 [Streamer Avatar]: ✅ READY" in instruction
+    assert "Deliverable: anchor_01.png" in instruction
+
+
+def test_director_instruction_out_of_sync_alignment():
+    """Verify that director_instruction aligns artifact sync tag with kanban out-of-sync status."""
+    from unittest.mock import MagicMock
+
+    from google.adk.agents.readonly_context import ReadonlyContext
+
+    from app.agent import director_instruction
+
+    mock_ctx = MagicMock(spec=ReadonlyContext)
+    mock_ctx.state = {
+        "spec": {
+            "global": {"footageUrl": "gameplay.mp4"},
+            "avatar": {
+                "appearance": "cyberpunk girl",
+                "setting": "neon room",
+                "_updated_at": 200.0,  # Spec changed later
+            },
+        },
+        "artifacts": {
+            "avatar": {
+                "artifact_name": "old_avatar.png",
+                "setting": "old loft",
+                "_updated_at": 100.0,  # Older artifact
+            }
+        },
+    }
+
+    instruction = director_instruction(mock_ctx)
+    # Kanban section flags OUT OF SYNC
+    assert (
+        "Stage 2 [Streamer Avatar]: ⚠️ OUT_OF_SYNC - Avatar spec updated; portrait needs re-generation."
+        in instruction
+    )
+    # Deliverable directly under the Stage card flags Stale
+    assert "Deliverable (⚠️ Stale - Out of sync): old_avatar.png" in instruction
+    assert "Room Setting: old loft" in instruction
+    # Active focus alerts the director
+    assert (
+        "ACTIVE DIRECTOR FOCUS: Downstream assets Stage 2 (Streamer Avatar) are OUT OF SYNC with upstream changes!"
+        in instruction
+    )

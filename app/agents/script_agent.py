@@ -30,7 +30,8 @@ from google.adk.tools import ToolContext
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from app.pipeline import record_artifact
+from app.pipeline import evaluate_stage_status, record_artifact
+from app.tools.spec_tools import update_script_spec
 
 load_dotenv()
 
@@ -573,13 +574,22 @@ async def edit_script_lines(
 # ============================================================================
 
 SCRIPT_AGENT_INSTRUCTION = """You are the expert Gaming Scriptwriter & Cinematographer (ScriptAgent).
-Your sole purpose is creating and refining high-energy, perfectly synchronized gameplay reaction scripts.
+Your sole purpose is creating and refining high-energy, perfectly synchronized gameplay reaction scripts and managing the script specification (game, cta, additionalInstructions, gameUrl, searchGrounding).
 
 【PREREQUISITE - GAMEPLAY FOOTAGE REQUIREMENT】
 - A gameplay video clip is a hard prerequisite: all shot timings and commentary MUST synchronize with on-screen milestones, and the sum of segment durations MUST equal the uploaded clip length.
 - If no gameplay footage (footageUrl) is provided or registered in the session:
-  -> DO NOT invent fictional timestamps or hallucinate an arbitrary script.
-  -> Clearly inform the Director (Coordinator) that the gameplay footage clip is required before the script can be drafted, and ask the Director to request the video from the user.
+  -> If the user provided game name, CTA, or tone instructions, call `update_script_spec` to persist them.
+  -> Then clearly inform the Director that the gameplay footage clip is required before commentary can be drafted, and ask the Director to request the video from the user.
+
+【DOMAIN SPEC OWNERSHIP (spec.script)】
+- You own the commentary scriptwriting specification:
+  * `game`: Name of the video game being played.
+  * `cta`: Call-to-action closing line (e.g. 'Follow for part 2!').
+  * `additionalInstructions`: Commentary tone, humor style, or specific creative notes.
+  * `gameUrl`: Official game store or website URL for grounding facts.
+  * `searchGrounding`: Enable/disable Google Search grounding for game lore/facts.
+- When the user's request provides, clarifies, or modifies any of these script attributes, ALWAYS call `update_script_spec` first to persist the parameters into session state.
 
 【LOAD-BEARING RULES】
 1. GENDER-NEUTRAL PRONOUNS: In all visual action descriptions (prompt/on_screen), ALWAYS use gender-neutral pronouns ('they' / 'them'). NEVER use 'he', 'she', 'him', or 'her'. The streamer's avatar likeness has not been settled yet.
@@ -588,11 +598,16 @@ Your sole purpose is creating and refining high-energy, perfectly synchronized g
    - 3s: 4-5 words | 4s: 5-7 words | 5s: 7-10 words | 6s: 10-13 words | 7s: 13-16 words | 8s: 16-19 words | 9s: 19-22 words | 10s: 22-25 words.
    - Always include expressive vocal tags in brackets like [Laughing], [Shouting], [Gasping].
 
-【TOOL USAGE】
-- When no script exists yet, or when the user wants an overall creative rewrite of the script:
-  -> Call `watch_gameplay_and_generate_script`. It will automatically integrate Google Search grounding if enabled, watch the gameplay video, and produce synchronized segments.
-- When a script already exists and the user wants to adjust/change specific lines, words, or actions:
-  -> Craft the new dialogue/action adhering to word count rules, and call `edit_script_lines`. DO NOT regenerate the whole script!
+【TOOL USAGE & EXECUTION POLICY】
+1. `update_script_spec`: Call to record or update game title, CTA, commentary tone, or grounding settings in session state.
+2. `watch_gameplay_and_generate_script`: Call when gameplay footage is ready and no script exists yet, or when an overall creative rewrite of the script is requested.
+3. `edit_script_lines`: Call when a script already exists and the user wants to adjust/change specific lines, words, or actions. DO NOT regenerate the whole script!
+4. Decision Workflow:
+   - When the user provides or modifies game info or script settings (e.g. "游戏是黑神话悟空", "语气更幽默一点", "结尾加一句关注"):
+     a) Call `update_script_spec(...)` with the updated parameters.
+     b) If gameplay footage is registered AND user asks to generate the script, OR if a script deliverable already exists in session state (Direct Modification intent):
+        Proceed to generate/re-generate or edit lines matching the new creative direction!
+     c) If gameplay footage is NOT yet registered, confirm the registered script settings and remind the Director that footage is needed.
 
 After tool execution, provide a clear, concise summary of the lines and timing back to the Director.
 """
@@ -628,11 +643,40 @@ def script_agent_instruction(context: ReadonlyContext) -> str:
     if cta:
         status_lines.append(f"- Call to Action (CTA): {cta}")
     if additional_instructions:
-        status_lines.append(f"- Creative Instructions / Tone: {additional_instructions}")
-    if has_script:
         status_lines.append(
-            "- Existing Script Deliverable: Present in session (available for line editing)"
+            f"- Creative Instructions / Tone: {additional_instructions}"
         )
+    if has_script:
+        script_artifact = artifacts["script"]
+        segments = []
+        total_duration = 0
+        if isinstance(script_artifact, dict):
+            segments = script_artifact.get("segments", [])
+            total_duration = script_artifact.get(
+                "total_duration",
+                segments[-1].get("end_seconds", 0) if segments else 0,
+            )
+        elif isinstance(script_artifact, list):
+            segments = script_artifact
+            total_duration = segments[-1].get("end_seconds", 0) if segments else 0
+
+        sc_eval = evaluate_stage_status("script", state)
+        sync_tag = (
+            f" [⚠️ OUT OF SYNC: {sc_eval['summary']}]"
+            if sc_eval["status"] == "OUT_OF_SYNC"
+            else " [Ready]"
+        )
+        status_lines.append(
+            f"- Existing Script Deliverable: Present in session ({len(segments)} segments, {total_duration}s total duration){sync_tag}"
+        )
+        if segments:
+            status_lines.append("  * Current Commentary Shot List:")
+            for s in segments:
+                status_lines.append(
+                    f"    - Line {s.get('id')} [{s.get('startTime', '00:00')} - {s.get('endTime', '00:00')} ({s.get('duration', 6)}s)]:"
+                )
+                status_lines.append(f"      * Action: {s.get('prompt', '')}")
+                status_lines.append(f'      * Dialogue: "{s.get("dialogue", "")}"')
     else:
         status_lines.append("- Existing Script Deliverable: None drafted yet")
 
@@ -648,6 +692,7 @@ script_agent = Agent(
     ),
     instruction=script_agent_instruction,
     tools=[
+        update_script_spec,
         watch_gameplay_and_generate_script,
         edit_script_lines,
     ],

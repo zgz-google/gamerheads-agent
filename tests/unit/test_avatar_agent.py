@@ -91,7 +91,10 @@ def test_build_avatar_prompt():
         device="Hands-free (No device)",
         has_reference_image=True,
     )
-    assert "Maintain consistent identity and facial features with the reference image." in ref_prompt
+    assert (
+        "Maintain consistent identity and facial features with the reference image."
+        in ref_prompt
+    )
     assert "DIRECTLY into the camera lens" in ref_prompt
 
 
@@ -102,7 +105,24 @@ def test_avatar_agent_attributes():
         getattr(t, "__name__", None) or getattr(t, "name", "")
         for t in avatar_agent.tools
     ]
-    assert tool_names == ["generate_golden_anchor_avatar"]
+    assert tool_names == ["update_avatar_spec", "generate_golden_anchor_avatar"]
+
+
+@pytest.mark.asyncio
+async def test_update_avatar_spec():
+    """Verifies update_avatar_spec updates avatar spec in session state."""
+    from app.tools.spec_tools import update_avatar_spec
+
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {"spec": {"avatar": {}}}
+    res = await update_avatar_spec(
+        appearance="Cyborg cat",
+        setting="Neon loft",
+        tool_context=mock_ctx,
+    )
+    assert "Spec updated successfully" in res
+    assert mock_ctx.state["spec"]["avatar"]["appearance"] == "Cyborg cat"
+    assert mock_ctx.state["spec"]["avatar"]["setting"] == "Neon loft"
 
 
 def test_avatar_agent_instruction_dynamic_injection():
@@ -121,7 +141,13 @@ def test_avatar_agent_instruction_dynamic_injection():
             },
         },
         "artifacts": {
-            "avatar": {"artifact_name": "avatar_1234.png"},
+            "avatar": {
+                "artifact_name": "avatar_1234.png",
+                "appearance": "Purple cat in hoodie",
+                "setting": "Cozy loft room with neon sign",
+                "gamingDevice": "Console",
+                "aspectRatio": "9:16",
+            },
         },
     }
 
@@ -132,6 +158,34 @@ def test_avatar_agent_instruction_dynamic_injection():
     assert "Gaming Platform: Console" in instruction
     assert "Aspect Ratio: 9:16" in instruction
     assert "Existing Avatar Deliverable: avatar_1234.png (Ready)" in instruction
+    assert "Current Deliverable Details:" in instruction
+    assert "Setting: Cozy loft room with neon sign" in instruction
+
+
+def test_avatar_agent_instruction_out_of_sync():
+    """Tests that avatar_agent_instruction flags out-of-sync deliverable when spec was updated."""
+    mock_context = MagicMock(spec=ReadonlyContext)
+    mock_context.state = {
+        "spec": {
+            "global": {"gamingDevice": "PC"},
+            "avatar": {
+                "appearance": "Retro pixel knight",
+                "_updated_at": 200.0,
+            },
+        },
+        "artifacts": {
+            "avatar": {
+                "artifact_name": "pixel_01.png",
+                "_updated_at": 100.0,
+            },
+        },
+    }
+
+    instruction = avatar_agent_instruction(mock_context)
+    assert (
+        "Existing Avatar Deliverable: pixel_01.png (⚠️ OUT OF SYNC: Avatar spec updated; portrait needs re-generation.)"
+        in instruction
+    )
 
 
 @pytest.mark.asyncio
