@@ -233,7 +233,7 @@ async def normalize_clip(input_path: str, output_path: str, fps: int = 24) -> st
             "-vf",
             vf,
             "-af",
-            "asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,apad",
+            "asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0",
             "-c:v",
             CANONICAL["video_codec"],
             "-preset",
@@ -270,7 +270,7 @@ async def normalize_clip(input_path: str, output_path: str, fps: int = 24) -> st
             "-vf",
             vf,
             "-af",
-            "asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,apad",
+            "asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0",
             "-c:v",
             CANONICAL["video_codec"],
             "-preset",
@@ -310,7 +310,12 @@ async def normalize_clip(input_path: str, output_path: str, fps: int = 24) -> st
 async def extract_last_frame(
     video_path: str, output_image_path: str | None = None
 ) -> str:
-    """Extracts the final frame of a video clip (seeks 80ms before EOF).
+    """Extracts the final frame of a video clip using trailing-window overwrite.
+
+    Decodes the final 0.5 seconds of the video stream with -update 1, continuously
+    overwriting output_image_path until EOF so the final written image is guaranteed
+    to be the true last frame without tight PTS-margin sensitivity. Falls back to full
+    decode with -update 1 before raising.
 
     Used by the Continuity Chain to seed Segment N from Segment N-1's final pose.
 
@@ -326,16 +331,18 @@ async def extract_last_frame(
         os.close(fd)
 
     ffmpeg = get_ffmpeg_exe()
+    v_dur = probe_video_duration(video_path) or 0.0
 
-    # Seeks 80ms from end (-sseof -0.08)
+    # Primary: seek to (D_video - 0.5s) and continuously overwrite to EOF
+    seek_time = max(0.0, v_dur - 0.5)
     cmd1 = [
         ffmpeg,
         "-y",
-        "-sseof",
-        "-0.08",
+        "-ss",
+        f"{seek_time:.3f}",
         "-i",
         video_path,
-        "-frames:v",
+        "-update",
         "1",
         "-q:v",
         "2",
@@ -354,13 +361,13 @@ async def extract_last_frame(
     ):
         return output_image_path
 
-    # Fallback: if clip is ultra short (< 80ms), grab the first available frame
+    # Fallback: full decode continuous overwrite (safe against corrupt seek indexes, low RSS)
     cmd2 = [
         ffmpeg,
         "-y",
         "-i",
         video_path,
-        "-frames:v",
+        "-update",
         "1",
         "-q:v",
         "2",
@@ -372,15 +379,16 @@ async def extract_last_frame(
     _, stderr2 = await proc2.communicate()
 
     if (
-        proc2.returncode != 0
-        or not os.path.exists(output_image_path)
-        or os.path.getsize(output_image_path) == 0
+        proc2.returncode == 0
+        and os.path.exists(output_image_path)
+        and os.path.getsize(output_image_path) > 0
     ):
-        raise RuntimeError(
-            f"Failed to extract last frame from {video_path}: {stderr2.decode('utf-8', errors='ignore')}"
-        )
+        return output_image_path
 
-    return output_image_path
+    # Hard error on failure: do NOT silently fallback to the first frame!
+    raise RuntimeError(
+        f"Failed to extract last frame from {video_path}: {stderr2.decode('utf-8', errors='ignore')}"
+    )
 
 
 async def extract_last_frame_data_url(video_path: str) -> str:

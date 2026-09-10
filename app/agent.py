@@ -13,10 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger("app").setLevel(logging.INFO)
 
 from google.adk.agents import Agent
 from google.adk.apps import App
