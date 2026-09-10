@@ -14,6 +14,12 @@
 
 FROM python:3.12-slim
 
+# Install system dependencies: ffmpeg, ffprobe, and fonts for ASS subtitle rendering
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir uv
 
 WORKDIR /code

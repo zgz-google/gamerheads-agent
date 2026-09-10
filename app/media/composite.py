@@ -17,24 +17,209 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
-import subprocess
+from typing import Any
 
-from app.media.clips import get_ffmpeg_exe, has_audio_track
+from app.media.clips import (
+    CANONICAL,
+    get_ffmpeg_exe,
+    probe_duration,
+    probe_has_audio,
+    probe_video_dimensions,
+)
+
+# Reference canvas dimensions (1080p either way)
+COMPOSITE_FRAMES = {
+    "16:9": {"width": 1920, "height": 1080},
+    "9:16": {"width": 1080, "height": 1920},
+}
+
+PIP_AREA = 0.1  # Picture-in-picture takes exactly 10% of canvas area
+PIP_MARGIN = 0.02  # 2% margin from frame edge
+STACK_COLUMN = 0.30  # Streamer takes 30% width in 16:9 stacked layout
+STACK_BAND = 0.35  # Streamer takes 35% height in 9:16 stacked layout
+MIN_KEPT_FRACTION = 2 / 3  # Minimum kept fraction to prefer cover over contain
 
 
-def get_video_duration(file_path: str) -> float:
-    """Gets duration in seconds of a video file using ffmpeg."""
-    ffmpeg = get_ffmpeg_exe()
-    cmd = [ffmpeg, "-i", file_path]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    for line in res.stderr.split("\n"):
-        if "Duration:" in line:
-            parts = line.split("Duration:")[1].split(",")[0].strip()
-            # Format: HH:MM:SS.ms
-            h, m, s = parts.split(":")
-            return float(h) * 3600 + float(m) * 60 + float(s)
-    return 0.0
+def even(n: float) -> int:
+    """Rounds to nearest even integer for h.264 chroma alignment."""
+    return max(2, round(n / 2) * 2)
+
+
+def cover_keeps(src: float, dst: float) -> float:
+    """The share of the source dimension a cover-crop into dst would keep."""
+    return min(src, dst) / max(src, dst)
+
+
+def plan_composite(
+    aspect_ratio: str,
+    layout: str,
+    pip_placement: str,
+    stacked_placement: str | None,
+    streamer_aspect: float,
+) -> dict[str, Any]:
+    """Calculates frame rectangles for gameplay and streamer according to exact reference geometry."""
+    frame = COMPOSITE_FRAMES.get(aspect_ratio, COMPOSITE_FRAMES["16:9"])
+    w = frame["width"]
+    h = frame["height"]
+
+    if layout == "streamer-only":
+        return {
+            "frame": frame,
+            "gameplay": None,
+            "streamer": {"x": 0, "y": 0, "width": w, "height": h},
+        }
+
+    if layout == "stacked":
+        if aspect_ratio == "9:16":
+            split = even(h * STACK_BAND)
+            top = (stacked_placement or "top") == "top"
+            return {
+                "frame": frame,
+                "streamer": {
+                    "x": 0,
+                    "y": 0 if top else h - split,
+                    "width": w,
+                    "height": split,
+                },
+                "gameplay": {
+                    "x": 0,
+                    "y": split if top else 0,
+                    "width": w,
+                    "height": h - split,
+                },
+            }
+        else:
+            split = even(w * STACK_COLUMN)
+            left = (stacked_placement or "left") != "right"
+            return {
+                "frame": frame,
+                "streamer": {
+                    "x": 0 if left else w - split,
+                    "y": 0,
+                    "width": split,
+                    "height": h,
+                },
+                "gameplay": {
+                    "x": split if left else 0,
+                    "y": 0,
+                    "width": w - split,
+                    "height": h,
+                },
+            }
+
+    # Picture-in-picture layout: area is 10% of total frame area
+    pip_width = even(math.sqrt(w * h * PIP_AREA * streamer_aspect))
+    pip_height = even(pip_width / streamer_aspect)
+    margin = even(w * PIP_MARGIN)
+    right = pip_placement in ("top-right", "bottom-right")
+    top = pip_placement in ("top-left", "top-right")
+
+    return {
+        "frame": frame,
+        "gameplay": {"x": 0, "y": 0, "width": w, "height": h},
+        "streamer": {
+            "x": w - pip_width - margin if right else margin,
+            "y": margin if top else h - pip_height - margin,
+            "width": pip_width,
+            "height": pip_height,
+        },
+    }
+
+
+def build_composite_graph(
+    plan: dict[str, Any],
+    streamer_seconds: float,
+    gameplay_seconds: float | None,
+    gameplay_has_audio: bool,
+    gameplay_aspect: float | None,
+    gameplay_volume: float,
+    streamer_volume: float,
+    subtitles_ass_path: str | None = None,
+) -> tuple[str, str | None]:
+    """Constructs the filter_complex graph string matching composite.ts."""
+    frame = plan["frame"]
+    w = frame["width"]
+    h = frame["height"]
+    chains: list[str] = []
+    gameplay_fit: str | None = None
+
+    def fit_rect(r: dict[str, int]) -> str:
+        return (
+            f"scale={r['width']}:{r['height']}:force_original_aspect_ratio=decrease,"
+            f"pad={r['width']}:{r['height']}:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+        )
+
+    if plan["gameplay"]:
+        g = plan["gameplay"]
+        target_seconds = max(streamer_seconds, gameplay_seconds or 0.0)
+
+        # Pad gameplay with last frame clone if gameplay is shorter than target duration
+        gameplay_shortfall = max(0.0, target_seconds - (gameplay_seconds or 0.0))
+        gameplay_tpad = (
+            f",tpad=stop_mode=clone:stop_duration={gameplay_shortfall + 0.5:.2f}"
+            if gameplay_shortfall > 0
+            else ""
+        )
+
+        # Pad streamer with last frame clone if streamer is shorter than target duration
+        streamer_shortfall = max(0.0, target_seconds - streamer_seconds)
+        streamer_tpad = (
+            f",tpad=stop_mode=clone:stop_duration={streamer_shortfall + 0.5:.2f}"
+            if streamer_shortfall > 0
+            else ""
+        )
+
+        target_aspect = g["width"] / g["height"]
+        if (
+            gameplay_aspect is None
+            or cover_keeps(gameplay_aspect, target_aspect) >= MIN_KEPT_FRACTION
+        ):
+            gameplay_fit = "cover"
+            place = (
+                f"scale={g['width']}:{g['height']}:force_original_aspect_ratio=increase,"
+                f"crop={g['width']}:{g['height']}"
+            )
+        else:
+            gameplay_fit = "contain"
+            place = (
+                f"scale={g['width']}:{g['height']}:force_original_aspect_ratio=decrease,"
+                f"pad={g['width']}:{g['height']}:(ow-iw)/2:(oh-ih)/2:black"
+            )
+
+        chains.append(
+            f"[1:v]{place},setsar=1{gameplay_tpad},pad={w}:{h}:{g['x']}:{g['y']}:black[bg]"
+        )
+        chains.append(f"[0:v]{fit_rect(plan['streamer'])}{streamer_tpad}[fg]")
+        chains.append(
+            f"[bg][fg]overlay={plan['streamer']['x']}:{plan['streamer']['y']}:eof_action=repeat[composed]"
+        )
+        video_tail = "[composed]"
+    else:
+        chains.append(f"[0:v]{fit_rect(plan['streamer'])}[composed]")
+        video_tail = "[composed]"
+
+    # Subtitles burned at finished composite resolution
+    if subtitles_ass_path and os.path.exists(subtitles_ass_path):
+        safe_ass = (
+            subtitles_ass_path.replace("\\", "/")
+            .replace(":", "\\:")
+            .replace("'", "\\'")
+        )
+        chains.append(f"{video_tail}ass='{safe_ass}'[v]")
+    else:
+        chains.append(f"{video_tail}null[v]")
+
+    # Audio mixing: amix with normalize=0 so volume values are applied directly
+    chains.append(f"[0:a]volume={streamer_volume}[sa]")
+    if plan["gameplay"] and gameplay_has_audio:
+        chains.append(f"[1:a]volume={gameplay_volume}[ga]")
+        chains.append("[sa][ga]amix=inputs=2:duration=longest:normalize=0[a]")
+    else:
+        chains.append("[sa]anull[a]")
+
+    return ";".join(chains), gameplay_fit
 
 
 async def composite_streamer_over_gameplay(
@@ -48,7 +233,7 @@ async def composite_streamer_over_gameplay(
     gameplay_volume: float = 0.8,
     streamer_volume: float = 1.0,
     subtitles_ass_path: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Composites streamer video over gameplay footage using FFmpeg.
 
     Args:
@@ -64,157 +249,126 @@ async def composite_streamer_over_gameplay(
         subtitles_ass_path: Optional path to .ass subtitle file to burn into video.
 
     Returns:
-        Dict with duration, output path, and drift metadata.
+        Dict with duration, output path, drift metadata, and gameplay placement fit.
     """
     ffmpeg = get_ffmpeg_exe()
-    is_vertical = aspect_ratio == "9:16"
-    width = 1080 if is_vertical else 1920
-    height = 1920 if is_vertical else 1080
 
-    streamer_dur = get_video_duration(streamer_path)
+    streamer_dims = probe_video_dimensions(streamer_path)
+    streamer_dur = probe_duration(streamer_path) or 0.0
+    if not streamer_dur:
+        raise RuntimeError(f"Could not read streamer track duration: {streamer_path}")
 
-    # 1. streamer-only layout: only process streamer video
-    if layout == "streamer-only" or not gameplay_path:
-        vf_filters = [f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"]
-        if subtitles_ass_path and os.path.exists(subtitles_ass_path):
-            safe_ass = subtitles_ass_path.replace("\\", "/").replace(":", "\\:")
-            vf_filters.append(f"ass='{safe_ass}'")
+    streamer_aspect = (
+        (streamer_dims[0] / streamer_dims[1])
+        if streamer_dims and streamer_dims[1] > 0
+        else (16 / 9)
+    )
 
-        cmd = [
-            ffmpeg,
-            "-i", streamer_path,
-            "-vf", ",".join(vf_filters),
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-pix_fmt", "yuv420p",
-            "-af", f"volume={streamer_volume}",
-            "-c:a", "aac",
-            output_path,
-            "-y",
-        ]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        _, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(f"FFmpeg streamer-only composite failed: {stderr.decode('utf-8', errors='ignore')}")
+    # Standardize layout names ('pip' -> 'picture-in-picture')
+    effective_layout = (
+        "picture-in-picture" if layout in ("pip", "picture-in-picture") else layout
+    )
 
-        return {"outputPath": output_path, "durationSeconds": streamer_dur, "driftSeconds": 0.0}
+    plan = plan_composite(
+        aspect_ratio=aspect_ratio,
+        layout=effective_layout,
+        pip_placement=pip_placement,
+        stacked_placement=stacked_placement,
+        streamer_aspect=streamer_aspect,
+    )
 
-    # 2. PIP or Stacked layout
-    gameplay_dur = get_video_duration(gameplay_path)
-    drift = streamer_dur - gameplay_dur
+    gameplay_dur = None
+    gameplay_has_audio = False
+    gameplay_aspect = None
 
-    streamer_has_audio = has_audio_track(streamer_path)
-    gameplay_has_audio = has_audio_track(gameplay_path)
+    if (
+        gameplay_path
+        and effective_layout != "streamer-only"
+        and os.path.exists(gameplay_path)
+    ):
+        gameplay_dur = probe_duration(gameplay_path)
+        gameplay_has_audio = probe_has_audio(gameplay_path)
+        g_dims = probe_video_dimensions(gameplay_path)
+        if g_dims and g_dims[1] > 0:
+            gameplay_aspect = g_dims[0] / g_dims[1]
 
-    # Filter graph construction
-    filter_complex: list[str] = []
+    filter_complex, gameplay_fit = build_composite_graph(
+        plan=plan,
+        streamer_seconds=streamer_dur,
+        gameplay_seconds=gameplay_dur,
+        gameplay_has_audio=gameplay_has_audio,
+        gameplay_aspect=gameplay_aspect,
+        gameplay_volume=gameplay_volume,
+        streamer_volume=streamer_volume,
+        subtitles_ass_path=subtitles_ass_path,
+    )
 
-    if layout == "stacked":
-        # Stacked layout
-        st_place = stacked_placement or ("top" if is_vertical else "left")
-        if is_vertical:
-            # 1080x1920 split vertically: each 1080x960
-            half_h = height // 2
-            filter_complex.append(f"[1:v]scale={width}:{half_h}:force_original_aspect_ratio=increase,crop={width}:{half_h}[g_crop]")
-            filter_complex.append(f"[0:v]scale={width}:{half_h}:force_original_aspect_ratio=increase,crop={width}:{half_h}[s_crop]")
-            if st_place == "top":
-                # Streamer top, gameplay bottom
-                filter_complex.append("[s_crop][g_crop]vstack=inputs=2[v_base]")
-            else:
-                # Gameplay top, streamer bottom
-                filter_complex.append("[g_crop][s_crop]vstack=inputs=2[v_base]")
-        else:
-            # 1920x1080 split horizontally: each 960x1080
-            half_w = width // 2
-            filter_complex.append(f"[1:v]scale={half_w}:{height}:force_original_aspect_ratio=increase,crop={half_w}:{height}[g_crop]")
-            filter_complex.append(f"[0:v]scale={half_w}:{height}:force_original_aspect_ratio=increase,crop={half_w}:{height}[s_crop]")
-            if st_place == "left":
-                # Streamer left, gameplay right
-                filter_complex.append("[s_crop][g_crop]hstack=inputs=2[v_base]")
-            else:
-                # Gameplay left, streamer right
-                filter_complex.append("[g_crop][s_crop]hstack=inputs=2[v_base]")
-    else:
-        # PIP layout
-        filter_complex.append(f"[1:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}[bg]")
-        # Overlay size: ~30% of canvas width
-        pip_w = int(width * 0.30)
-        pip_margin = 32
-        filter_complex.append(f"[0:v]scale={pip_w}:-2[pip_scaled]")
-
-        if pip_placement == "bottom-left":
-            overlay_coords = f"x={pip_margin}:y=main_h-overlay_h-{pip_margin}"
-        elif pip_placement == "top-right":
-            overlay_coords = f"x=main_w-overlay_w-{pip_margin}:y={pip_margin}"
-        elif pip_placement == "top-left":
-            overlay_coords = f"x={pip_margin}:y={pip_margin}"
-        else:  # default to bottom-right
-            overlay_coords = f"x=main_w-overlay_w-{pip_margin}:y=main_h-overlay_h-{pip_margin}"
-
-        filter_complex.append(f"[bg][pip_scaled]overlay={overlay_coords}[v_base]")
-
-    # Subtitles
-    if subtitles_ass_path and os.path.exists(subtitles_ass_path):
-        safe_ass = subtitles_ass_path.replace("\\", "/").replace(":", "\\:")
-        filter_complex.append(f"[v_base]ass='{safe_ass}'[vout]")
-        map_v = "[vout]"
-    else:
-        map_v = "[v_base]"
-
-    # Audio mixing
-    audio_inputs_count = 0
-    audio_parts = []
-    if streamer_has_audio:
-        filter_complex.append(f"[0:a]volume={streamer_volume}[a_streamer]")
-        audio_parts.append("[a_streamer]")
-        audio_inputs_count += 1
-    if gameplay_has_audio:
-        filter_complex.append(f"[1:a]volume={gameplay_volume}[a_gameplay]")
-        audio_parts.append("[a_gameplay]")
-        audio_inputs_count += 1
-
-    if audio_inputs_count == 2:
-        filter_complex.append(f"{''.join(audio_parts)}amix=inputs=2:duration=first:dropout_transition=2[aout]")
-        map_audio = ["[aout]"]
-    elif audio_inputs_count == 1:
-        filter_complex.append(f"{audio_parts[0]}acopy[aout]")
-        map_audio = ["[aout]"]
-    else:
-        # Generate silent audio if neither has audio
-        map_audio = []
+    target_dur = streamer_dur
+    if gameplay_dur is not None and effective_layout != "streamer-only":
+        target_dur = max(streamer_dur, gameplay_dur)
 
     cmd = [
         ffmpeg,
-        "-i", streamer_path,  # input 0
-        "-i", gameplay_path,  # input 1
-        "-filter_complex", ";".join(filter_complex),
-        "-map", map_v,
-    ]
-    if map_audio:
-        cmd.extend(["-map", map_audio[0], "-c:a", "aac"])
-    else:
-        cmd.extend(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-c:a", "aac", "-shortest"])
-
-    cmd.extend([
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-pix_fmt", "yuv420p",
-        "-t", str(streamer_dur),  # End exactly when streamer finishes
-        output_path,
         "-y",
-    ])
+        "-i",
+        streamer_path,
+        *(
+            ["-i", gameplay_path]
+            if gameplay_path and effective_layout != "streamer-only"
+            else []
+        ),
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "[a]",
+        "-t",
+        f"{target_dur:.3f}",
+        "-c:v",
+        CANONICAL["video_codec"],
+        "-preset",
+        CANONICAL["preset"],
+        "-crf",
+        CANONICAL["crf"],
+        "-pix_fmt",
+        CANONICAL["pixel_format"],
+        "-r",
+        str(CANONICAL["fps"]),
+        "-c:a",
+        CANONICAL["audio_codec"],
+        "-b:a",
+        CANONICAL["audio_bitrate"],
+        "-ar",
+        CANONICAL["sample_rate"],
+        "-ac",
+        CANONICAL["channels"],
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
 
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(f"FFmpeg composite failed: {stderr.decode('utf-8', errors='ignore')}")
+        raise RuntimeError(
+            f"FFmpeg composite failed: {stderr.decode('utf-8', errors='ignore')}"
+        )
+
+    drift = (
+        round(streamer_dur - gameplay_dur, 1)
+        if gameplay_dur is not None and effective_layout != "streamer-only"
+        else None
+    )
 
     return {
         "outputPath": output_path,
-        "durationSeconds": streamer_dur,
-        "driftSeconds": round(drift, 1),
+        "durationSeconds": round(target_dur, 1),
+        "streamerDurationSeconds": round(streamer_dur, 1),
+        "gameplayDurationSeconds": round(gameplay_dur, 1) if gameplay_dur is not None else None,
+        "driftSeconds": drift,
+        "gameplayFit": gameplay_fit,
+        "gameplayAspect": gameplay_aspect,
     }

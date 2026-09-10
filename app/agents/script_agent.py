@@ -131,7 +131,7 @@ CRITICAL PRONOUN RULE: Always use gender-neutral pronouns ('they' or 'them') whe
 
 STREAMER_RULES = """
 CRITICAL DURATION & TIMELINE RULES:
-1. **TOTAL DURATION**: The sum of all segment durations MUST EXACTLY EQUATE to the length of the uploaded gameplay video.
+1. **TARGET DURATION & TIMELINE PACING**: Aim for the sum of all segment durations to closely cover the target gameplay video length, broken into consecutive, natural scene beats of **3 to 10 seconds** each.
 2. **SEGMENTATION**: Break the script into consecutive, natural scene beats of **3 to 10 seconds** each.
 3. **STRICT SPOKEN WORD COUNT MATCHING SEGMENT DURATION**:
    - Streamer dialogue must be realistically paced so that the streamer speaks naturally across the full duration of the shot without cutting off or being silent.

@@ -42,20 +42,32 @@ def strip_data_url(data: str) -> str:
     return data
 
 
-def find_video_in_interaction(interaction: dict[str, Any]) -> tuple[str | None, str | None]:
+def find_video_in_interaction(
+    interaction: dict[str, Any],
+) -> tuple[str | None, str | None]:
     """Inspects all known interaction API response shapes for video content.
 
     Returns:
         (uri, base64_data)
     """
     output_video = interaction.get("output_video") or {}
-    uri = output_video.get("uri") or output_video.get("gcsUri") or output_video.get("gcs_uri")
-    b64 = output_video.get("data") or output_video.get("bytesBase64Encoded") or output_video.get("bytes_base64_encoded")
+    uri = (
+        output_video.get("uri")
+        or output_video.get("gcsUri")
+        or output_video.get("gcs_uri")
+    )
+    b64 = (
+        output_video.get("data")
+        or output_video.get("bytesBase64Encoded")
+        or output_video.get("bytes_base64_encoded")
+    )
 
     if not uri and not b64:
         out = interaction.get("output") or {}
         uri = out.get("uri") or (out.get("video") or {}).get("uri")
-        b64 = (out.get("video") or {}).get("data") or (out.get("video") or {}).get("bytesBase64Encoded")
+        b64 = (out.get("video") or {}).get("data") or (out.get("video") or {}).get(
+            "bytesBase64Encoded"
+        )
 
     if not uri and not b64:
         cand_videos = (interaction.get("response") or {}).get("videos") or []
@@ -67,7 +79,9 @@ def find_video_in_interaction(interaction: dict[str, Any]) -> tuple[str | None, 
     if not uri and not b64:
         for step in interaction.get("steps") or []:
             for item in step.get("content") or []:
-                if item.get("type") == "video" or str(item.get("mime_type", "")).startswith("video/"):
+                if item.get("type") == "video" or str(
+                    item.get("mime_type", "")
+                ).startswith("video/"):
                     uri = item.get("uri")
                     b64 = item.get("data")
                     if uri or b64:
@@ -76,7 +90,9 @@ def find_video_in_interaction(interaction: dict[str, Any]) -> tuple[str | None, 
     # outputs[]
     if not uri and not b64:
         for item in interaction.get("outputs") or []:
-            if item.get("type") == "video" or str(item.get("mime_type", "")).startswith("video/"):
+            if item.get("type") == "video" or str(item.get("mime_type", "")).startswith(
+                "video/"
+            ):
                 uri = item.get("uri")
                 b64 = item.get("data")
                 if uri or b64:
@@ -107,26 +123,41 @@ async def generate_synthetic_clip(
         ffmpeg = get_ffmpeg_exe()
         cmd = [
             ffmpeg,
-            "-loop", "1",
-            "-i", img_temp,
-            "-f", "lavfi",
-            "-i", "anullsrc=r=44100:cl=stereo",
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "stillimage",
-            "-pix_fmt", "yuv420p",
-            "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
-            "-c:a", "aac",
-            "-t", str(duration_seconds),
-            dest_path,
             "-y",
+            "-loop",
+            "1",
+            "-i",
+            img_temp,
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-tune",
+            "stillimage",
+            "-pix_fmt",
+            "yuv420p",
+            "-vf",
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-t",
+            str(duration_seconds),
+            dest_path,
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise RuntimeError(f"Synthetic clip generation failed: {stderr.decode('utf-8', errors='ignore')}")
+            raise RuntimeError(
+                f"Synthetic clip generation failed: {stderr.decode('utf-8', errors='ignore')}"
+            )
     finally:
         if os.path.exists(img_temp):
             os.remove(img_temp)
@@ -151,10 +182,12 @@ async def omni_interaction(
         mock: Force synthetic generation (used for tests or offline execution).
 
     Returns:
-        Dict with interaction_id and dest_path.
+        Dict with interactionId and videoPath.
     """
     if mock or os.getenv("MOCK_OMNI") == "1":
-        await generate_synthetic_clip(start_frame_base64, duration_seconds, aspect_ratio, dest_path)
+        await generate_synthetic_clip(
+            start_frame_base64, duration_seconds, aspect_ratio, dest_path
+        )
         return {"interactionId": f"mock-{uuid.uuid4().hex[:8]}", "videoPath": dest_path}
 
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -162,7 +195,9 @@ async def omni_interaction(
 
     # If neither key nor project is configured, gracefully fall back to synthetic clip
     if not api_key and not project:
-        await generate_synthetic_clip(start_frame_base64, duration_seconds, aspect_ratio, dest_path)
+        await generate_synthetic_clip(
+            start_frame_base64, duration_seconds, aspect_ratio, dest_path
+        )
         return {"interactionId": f"mock-{uuid.uuid4().hex[:8]}", "videoPath": dest_path}
 
     clean_img = strip_data_url(start_frame_base64)
@@ -170,6 +205,20 @@ async def omni_interaction(
     if start_frame_base64.startswith("data:image/jpeg"):
         mime_type = "image/jpeg"
 
+    bucket = os.getenv("ARTIFACT_BUCKET_NAME", "")
+    response_format: dict[str, Any] = {
+        "type": "video",
+        "aspect_ratio": "9:16" if aspect_ratio == "9:16" else "16:9",
+    }
+    if bucket:
+        response_format["delivery"] = "uri"
+        response_format["gcs_uri"] = f"gs://{bucket}/omni/"
+    elif api_key:
+        response_format["delivery"] = "uri"
+    else:
+        response_format["delivery"] = "inline"
+
+    token = None
     if api_key:
         url = f"https://generativelanguage.googleapis.com/v1beta/interactions?key={api_key}"
         headers = {"Content-Type": "application/json"}
@@ -177,11 +226,16 @@ async def omni_interaction(
         # Vertex AI ADC
         import google.auth
         import google.auth.transport.requests
+
         creds, _ = google.auth.default()
         auth_req = google.auth.transport.requests.Request()
         creds.refresh(auth_req)
+        token = creds.token
         url = f"https://aiplatform.googleapis.com/v1beta1/projects/{project}/locations/global/interactions"
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {creds.token}"}
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
         if project:
             headers["X-Goog-User-Project"] = project
 
@@ -191,11 +245,7 @@ async def omni_interaction(
             {"type": "text", "text": prompt},
             {"type": "image", "mime_type": mime_type, "data": clean_img},
         ],
-        "response_format": {
-            "type": "video",
-            "aspect_ratio": "9:16" if aspect_ratio == "9:16" else "16:9",
-            "delivery": "inline",
-        },
+        "response_format": response_format,
         "generation_config": {"video_config": {"task": "image_to_video"}},
     }
 
@@ -207,13 +257,17 @@ async def omni_interaction(
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, headers=headers, json=body) as resp:
                     if resp.status >= 500 or resp.status == 429:
-                        last_error = RuntimeError(f"Omni transient error ({resp.status}): {await resp.text()}")
+                        last_error = RuntimeError(
+                            f"Omni transient error ({resp.status}): {await resp.text()}"
+                        )
                         if attempt < MAX_ATTEMPTS:
                             await asyncio.sleep(attempt * 2)
                             continue
                         raise last_error
                     if not resp.ok:
-                        raise RuntimeError(f"Omni request failed ({resp.status}): {await resp.text()}")
+                        raise RuntimeError(
+                            f"Omni request failed ({resp.status}): {await resp.text()}"
+                        )
                     interaction = await resp.json()
 
                     uri, b64_data = find_video_in_interaction(interaction)
@@ -226,11 +280,43 @@ async def omni_interaction(
                         return {"interactionId": interaction_id, "videoPath": dest_path}
 
                     if uri and uri.startswith("http"):
-                        async with session.get(uri) as dl_resp:
+                        dl_url = uri
+                        dl_headers = {}
+                        if api_key:
+                            if "key=" not in dl_url:
+                                dl_url += (
+                                    f"{'&' if '?' in dl_url else '?'}key={api_key}"
+                                )
+                        elif token:
+                            dl_headers["Authorization"] = f"Bearer {token}"
+
+                        async with session.get(dl_url, headers=dl_headers) as dl_resp:
                             if dl_resp.ok:
                                 with open(dest_path, "wb") as f:
                                     f.write(await dl_resp.read())
-                                return {"interactionId": interaction_id, "videoPath": dest_path}
+                                return {
+                                    "interactionId": interaction_id,
+                                    "videoPath": dest_path,
+                                }
+
+                    if uri and uri.startswith("gs://"):
+                        from google.cloud import storage
+
+                        client = storage.Client()
+                        blob = storage.Blob.from_string(uri, client=client)
+                        blob.download_to_filename(dest_path)
+                        return {"interactionId": interaction_id, "videoPath": dest_path}
+
+                    # Check for silent rejection: API answers 200 with status "completed" but billed zero tokens
+                    spent = int(
+                        (interaction.get("usage") or {}).get("total_input_tokens") or 0
+                    )
+                    if spent == 0:
+                        raise RuntimeError(
+                            "The clip generator accepted the request but produced nothing and billed zero input tokens, "
+                            "which is how it reports a silently rejected source image -- most often one showing a "
+                            "recognisable copyrighted character. Regenerate the avatar as an original design and retry."
+                        )
 
                     raise RuntimeError("Omni API response contained no video data.")
 
@@ -241,4 +327,6 @@ async def omni_interaction(
                 continue
             break
 
-    raise RuntimeError(f"Omni generation failed after {MAX_ATTEMPTS} attempts: {last_error}")
+    raise RuntimeError(
+        f"Omni generation failed after {MAX_ATTEMPTS} attempts: {last_error}"
+    )

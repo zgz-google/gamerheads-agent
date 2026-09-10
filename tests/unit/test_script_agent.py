@@ -153,15 +153,27 @@ async def test_edit_script_lines_with_adk_state_object():
     """Tests that edit_script_lines works directly on ADK State without raising KeyError: 0."""
     mock_ctx = MagicMock(spec=ToolContext)
     initial_segments = [
-        {"id": 1, "duration": 5, "startTime": "00:00", "endTime": "00:05", "dialogue": "Original"}
+        {
+            "id": 1,
+            "duration": 5,
+            "startTime": "00:00",
+            "endTime": "00:05",
+            "dialogue": "Original",
+        }
     ]
-    mock_ctx.state = State({"artifacts": {"script": {"segments": initial_segments, "total_duration": 5}}}, {})
+    mock_ctx.state = State(
+        {"artifacts": {"script": {"segments": initial_segments, "total_duration": 5}}},
+        {},
+    )
 
     edits = [LineEditItem(line=1, dialogue="Updated via ADK State")]
     res = await edit_script_lines(edits, mock_ctx)
     assert "Successfully updated line(s) [1]" in res
     assert "Updated via ADK State" in res
-    assert mock_ctx.state.get("artifacts")["script"]["segments"][0]["dialogue"] == "Updated via ADK State"
+    assert (
+        mock_ctx.state.get("artifacts")["script"]["segments"][0]["dialogue"]
+        == "Updated via ADK State"
+    )
 
 
 @pytest.mark.asyncio
@@ -312,7 +324,10 @@ async def test_watch_gameplay_and_generate_script_requires_research_when_groundi
     mock_ctx.load_artifact = AsyncMock(return_value=mock_part)
 
     res = await watch_gameplay_and_generate_script(mock_ctx)
-    assert "Cannot generate script yet: Google Search grounding is enabled for 'Apex Legends'" in res
+    assert (
+        "Cannot generate script yet: Google Search grounding is enabled for 'Apex Legends'"
+        in res
+    )
     assert "Please call the 'research_game' tool first" in res
 
 
@@ -388,7 +403,9 @@ async def test_research_game_success():
     }
 
     fake_response = MagicMock()
-    fake_response.text = "- 72 Transformations mechanic\n- Focus points and stance switching"
+    fake_response.text = (
+        "- 72 Transformations mechanic\n- Focus points and stance switching"
+    )
     chunk_mock = MagicMock()
     chunk_mock.web.uri = "https://heishenhua.com/mechanics"
     fake_response.candidates = [

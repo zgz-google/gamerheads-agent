@@ -12,39 +12,311 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FFmpeg video clip utilities: frame extraction, normalization, and compression."""
+"""FFmpeg video clip utilities: frame extraction, normalization, compression, and stream probing."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
+import re
+import shutil
 import subprocess
 import tempfile
+import uuid
+from typing import Any
 
 import imageio_ffmpeg
 
+# Canonical encode profile guaranteed across all rendered clips
+CANONICAL = {
+    "fps": 24,
+    "pixel_format": "yuv420p",
+    "video_codec": "libx264",
+    "crf": "18",
+    "preset": "veryfast",
+    "audio_codec": "aac",
+    "audio_bitrate": "192k",
+    "sample_rate": "44100",
+    "channels": "2",
+}
+
 
 def get_ffmpeg_exe() -> str:
-    """Returns the path to the bundled ffmpeg executable from imageio-ffmpeg."""
+    """Returns the path to the ffmpeg executable."""
+    env_path = os.getenv("FFMPEG_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    which_path = shutil.which("ffmpeg")
+    if which_path:
+        return which_path
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def has_audio_track(video_path: str) -> bool:
-    """Checks if the video file contains an audio stream."""
+def get_ffprobe_exe() -> str | None:
+    """Returns the path to the ffprobe executable if available."""
+    env_path = os.getenv("FFPROBE_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    which_path = shutil.which("ffprobe")
+    if which_path:
+        return which_path
+    return None
+
+
+def probe_video_info(video_path: str) -> dict[str, Any]:
+    """Probes video metadata using ffprobe or ffmpeg fallback.
+
+    Returns dict with keys:
+        - width: int | None
+        - height: int | None
+        - duration: float | None
+        - video_duration: float | None
+        - has_audio: bool
+        - fps: float | None
+    """
+    ffprobe = get_ffprobe_exe()
+    if ffprobe:
+        try:
+            cmd = [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=width,height,duration,r_frame_rate,codec_type",
+                "-of",
+                "json",
+                video_path,
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            import json
+
+            data = json.loads(res.stdout)
+            streams = data.get("streams", [])
+            format_info = data.get("format", {})
+
+            width = None
+            height = None
+            v_dur = None
+            has_audio = False
+            fps = None
+
+            for s in streams:
+                if s.get("codec_type") == "video":
+                    width = s.get("width")
+                    height = s.get("height")
+                    if s.get("duration"):
+                        try:
+                            v_dur = float(s["duration"])
+                        except ValueError:
+                            pass
+                    r_fps = s.get("r_frame_rate", "")
+                    if "/" in r_fps:
+                        num, den = r_fps.split("/")
+                        if den and float(den) > 0:
+                            fps = float(num) / float(den)
+                elif s.get("codec_type") == "audio":
+                    has_audio = True
+
+            dur = None
+            if format_info.get("duration"):
+                try:
+                    dur = float(format_info["duration"])
+                except ValueError:
+                    pass
+            if dur is None:
+                dur = v_dur
+
+            return {
+                "width": width,
+                "height": height,
+                "duration": dur,
+                "video_duration": v_dur if v_dur is not None else dur,
+                "has_audio": has_audio,
+                "fps": fps,
+            }
+        except Exception:
+            pass
+
+    # Fallback to ffmpeg -i stderr inspection
     ffmpeg = get_ffmpeg_exe()
     cmd = [ffmpeg, "-i", video_path]
     res = subprocess.run(cmd, capture_output=True, text=True)
-    return "Audio:" in res.stderr
+    stderr = res.stderr
+
+    dur = None
+    width = None
+    height = None
+    has_audio = "Audio:" in stderr
+    fps = None
+
+    # Parse Duration: 00:01:23.45
+    m_dur = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", stderr)
+    if m_dur:
+        h, m, s = m_dur.groups()
+        dur = float(h) * 3600 + float(m) * 60 + float(s)
+
+    # Parse Video stream dimensions: e.g. 1920x1080 or 1280x720
+    m_dim = re.search(r"Stream #.*?Video:.*?(\d{2,5})x(\d{2,5})", stderr)
+    if m_dim:
+        width = int(m_dim.group(1))
+        height = int(m_dim.group(2))
+
+    m_fps = re.search(r"(\d+(?:\.\d+)?)\s*fps", stderr)
+    if m_fps:
+        fps = float(m_fps.group(1))
+
+    return {
+        "width": width,
+        "height": height,
+        "duration": dur,
+        "video_duration": dur,
+        "has_audio": has_audio,
+        "fps": fps,
+    }
 
 
-async def extract_last_frame(video_path: str, output_image_path: str | None = None) -> str:
-    """Extracts the final frame of a video clip.
+def probe_video_dimensions(video_path: str) -> tuple[int, int] | None:
+    """Returns (width, height) or None if probing fails."""
+    info = probe_video_info(video_path)
+    if info.get("width") and info.get("height"):
+        return (info["width"], info["height"])
+    return None
 
-    Used by the Continuity Chain to feed Segment N-1's last frame as Segment N's starting frame.
+
+def probe_duration(video_path: str) -> float | None:
+    """Returns duration in seconds or None if probing fails."""
+    return probe_video_info(video_path).get("duration")
+
+
+def probe_video_duration(video_path: str) -> float | None:
+    """Returns video stream duration in seconds or None if probing fails."""
+    return probe_video_info(video_path).get("video_duration")
+
+
+def probe_has_audio(video_path: str) -> bool:
+    """Checks if the video file contains an audio stream."""
+    return probe_video_info(video_path).get("has_audio", False)
+
+
+def has_audio_track(video_path: str) -> bool:
+    """Backward compatibility alias for probe_has_audio."""
+    return probe_has_audio(video_path)
+
+
+async def normalize_clip(input_path: str, output_path: str, fps: int = 24) -> str:
+    """Normalizes video clip into canonical format: CFR 24fps, PTS reset, AAC 44.1kHz stereo.
+
+    Omni Flash hands back clips whose timestamps do not start at zero and whose AAC tracks
+    carry encoder priming; concatenating those as-is accumulates a few milliseconds of A/V skew
+    per clip until lips stop matching speech. Resetting PTS and resampling prevents this drift.
+
+    Args:
+        input_path: Path to raw input video.
+        output_path: Path to normalized output video.
+        fps: Target frame rate (default 24).
+
+    Returns:
+        The output_path.
+    """
+    ffmpeg = get_ffmpeg_exe()
+    audio_present = probe_has_audio(input_path)
+
+    vf = f"setpts=PTS-STARTPTS,fps={fps}"
+
+    if audio_present:
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-i",
+            input_path,
+            "-vf",
+            vf,
+            "-af",
+            "asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,apad",
+            "-c:v",
+            CANONICAL["video_codec"],
+            "-preset",
+            CANONICAL["preset"],
+            "-crf",
+            CANONICAL["crf"],
+            "-pix_fmt",
+            CANONICAL["pixel_format"],
+            "-r",
+            str(fps),
+            "-c:a",
+            CANONICAL["audio_codec"],
+            "-b:a",
+            CANONICAL["audio_bitrate"],
+            "-ar",
+            CANONICAL["sample_rate"],
+            "-ac",
+            CANONICAL["channels"],
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            output_path,
+        ]
+    else:
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-i",
+            input_path,
+            "-f",
+            "lavfi",
+            "-i",
+            f"anullsrc=channel_layout=stereo:sample_rate={CANONICAL['sample_rate']}",
+            "-vf",
+            vf,
+            "-af",
+            "asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,apad",
+            "-c:v",
+            CANONICAL["video_codec"],
+            "-preset",
+            CANONICAL["preset"],
+            "-crf",
+            CANONICAL["crf"],
+            "-pix_fmt",
+            CANONICAL["pixel_format"],
+            "-r",
+            str(fps),
+            "-c:a",
+            CANONICAL["audio_codec"],
+            "-b:a",
+            CANONICAL["audio_bitrate"],
+            "-ar",
+            CANONICAL["sample_rate"],
+            "-ac",
+            CANONICAL["channels"],
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            output_path,
+        ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Failed to normalize clip {input_path}: {stderr.decode('utf-8', errors='ignore')}"
+        )
+
+    return output_path
+
+
+async def extract_last_frame(
+    video_path: str, output_image_path: str | None = None
+) -> str:
+    """Extracts the final frame of a video clip (seeks 80ms before EOF).
+
+    Used by the Continuity Chain to seed Segment N from Segment N-1's final pose.
 
     Args:
         video_path: Path to the input video clip.
-        output_image_path: Destination path for the extracted frame (JPEG/PNG). If None, generates temp path.
+        output_image_path: Destination path for extracted JPEG. If None, creates a temp file.
 
     Returns:
         Path to the extracted frame image file.
@@ -55,135 +327,130 @@ async def extract_last_frame(video_path: str, output_image_path: str | None = No
 
     ffmpeg = get_ffmpeg_exe()
 
-    # Primary strategy: seek to 0.1s before end of file
+    # Seeks 80ms from end (-sseof -0.08)
     cmd1 = [
         ffmpeg,
-        "-sseof", "-0.1",
-        "-i", video_path,
-        "-update", "1",
-        "-q:v", "2",
-        output_image_path,
         "-y",
+        "-sseof",
+        "-0.08",
+        "-i",
+        video_path,
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        output_image_path,
     ]
 
-    proc = await asyncio.create_subprocess_exec(
+    proc1 = await asyncio.create_subprocess_exec(
         *cmd1, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
-    _, _ = await proc.communicate()
+    await proc1.communicate()
 
-    if proc.returncode == 0 and os.path.exists(output_image_path) and os.path.getsize(output_image_path) > 0:
+    if (
+        proc1.returncode == 0
+        and os.path.exists(output_image_path)
+        and os.path.getsize(output_image_path) > 0
+    ):
         return output_image_path
 
-    # Fallback strategy: read first available frame if clip is very short
+    # Fallback: if clip is ultra short (< 80ms), grab the first available frame
     cmd2 = [
         ffmpeg,
-        "-i", video_path,
-        "-vframes", "1",
-        "-update", "1",
-        "-q:v", "2",
-        output_image_path,
         "-y",
+        "-i",
+        video_path,
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        output_image_path,
     ]
-
     proc2 = await asyncio.create_subprocess_exec(
         *cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     _, stderr2 = await proc2.communicate()
-    if proc2.returncode != 0 or not os.path.exists(output_image_path) or os.path.getsize(output_image_path) == 0:
-        raise RuntimeError(f"Failed to extract last frame from {video_path}: {stderr2.decode('utf-8', errors='ignore')}")
+
+    if (
+        proc2.returncode != 0
+        or not os.path.exists(output_image_path)
+        or os.path.getsize(output_image_path) == 0
+    ):
+        raise RuntimeError(
+            f"Failed to extract last frame from {video_path}: {stderr2.decode('utf-8', errors='ignore')}"
+        )
 
     return output_image_path
 
 
-async def normalize_clip(input_path: str, output_path: str, fps: int = 30) -> str:
-    """Normalizes video frame rate, pixel format, timebase, and ensures standard AAC audio.
-
-    Normalizing clips immediately after generation is critical for continuity chaining
-    and seamless FFmpeg concatenation without audio/video drift or codec mismatches.
-
-    Args:
-        input_path: Path to raw input video.
-        output_path: Path to normalized output video.
-        fps: Target frame rate (default 30).
-
-    Returns:
-        The output_path.
-    """
-    ffmpeg = get_ffmpeg_exe()
-    audio_present = has_audio_track(input_path)
-
-    if audio_present:
-        cmd = [
-            ffmpeg,
-            "-i", input_path,
-            "-r", str(fps),
-            "-pix_fmt", "yuv420p",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "22",
-            "-c:a", "aac",
-            "-ar", "44100",
-            "-ac", "2",
-            output_path,
-            "-y",
-        ]
-    else:
-        # Generate silent audio track matching video duration
-        cmd = [
-            ffmpeg,
-            "-i", input_path,
-            "-f", "lavfi",
-            "-i", "anullsrc=r=44100:cl=stereo",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "22",
-            "-r", str(fps),
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-shortest",
-            output_path,
-            "-y",
-        ]
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+async def extract_last_frame_data_url(video_path: str) -> str:
+    """Extracts the last frame and returns it as a JPEG data URL."""
+    tmp_path = os.path.join(
+        os.path.dirname(video_path), f"lastframe-{uuid.uuid4().hex[:8]}.jpg"
     )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"Failed to normalize clip {input_path}: {stderr.decode('utf-8', errors='ignore')}")
+    try:
+        await extract_last_frame(video_path, tmp_path)
+        with open(tmp_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:image/jpeg;base64,{b64}"
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-    return output_path
 
-
-async def compress_video(input_path: str, output_path: str, max_height: int = 720) -> str:
-    """Compresses video for lightweight preview or upload.
-
-    Args:
-        input_path: Source video path.
-        output_path: Compressed destination path.
-        max_height: Maximum vertical resolution (default 720p).
-
-    Returns:
-        output_path.
+async def compress_video(
+    input_path: str, output_path: str, max_height: int | None = None
+) -> str:
+    """Shrinks gameplay footage enough to ride inline in LLM generation:
+    720p/2.5Mbps under 30s, 540p/1.5Mbps at or over 30s.
     """
+    dims = probe_video_dimensions(input_path)
+    if dims is None:
+        raise RuntimeError(
+            f"Not a valid or complete video file: {os.path.basename(input_path)} "
+            "(upload the actual video file, not a web link)"
+        )
+
+    duration = probe_duration(input_path) or 0.0
+    if max_height is not None:
+        max_dim = max_height
+        video_bitrate = "2000k"
+    else:
+        max_dim, video_bitrate = (720, "2500k") if duration <= 30 else (540, "1500k")
+
+    vf = (
+        f"scale='min({max_dim},iw)':'min({max_dim},ih)':force_original_aspect_ratio=decrease,"
+        "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0:black"
+    )
+
     ffmpeg = get_ffmpeg_exe()
     cmd = [
         ffmpeg,
-        "-i", input_path,
-        "-vf", f"scale=-2:min({max_height}\\,ih)",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "28",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        output_path,
         "-y",
+        "-i",
+        input_path,
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-b:v",
+        video_bitrate,
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        output_path,
     ]
+
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(f"Failed to compress video {input_path}: {stderr.decode('utf-8', errors='ignore')}")
+        raise RuntimeError(
+            f"Failed to compress video {input_path}: {stderr.decode('utf-8', errors='ignore')}"
+        )
 
     return output_path

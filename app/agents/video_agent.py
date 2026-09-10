@@ -63,7 +63,9 @@ def build_omni_prompt(
 
     if gaming_device == "Hands-free (No device)":
         device_instruction = "Streamer is completely hands-free with empty hands."
-        gaze_instruction = "Streamer looks directly into the camera lens with engaging eye contact."
+        gaze_instruction = (
+            "Streamer looks directly into the camera lens with engaging eye contact."
+        )
     elif gaming_device == "PC":
         device_instruction = "Streamer plays on PC with keyboard and mouse on desk."
     elif gaming_device == "Console":
@@ -71,7 +73,9 @@ def build_omni_prompt(
     elif gaming_device == "Mobile (Vertical)":
         device_instruction = "Streamer holds a smartphone vertically in portrait mode."
     elif gaming_device == "Mobile (Horizontal)":
-        device_instruction = "Streamer holds a smartphone horizontally in landscape mode."
+        device_instruction = (
+            "Streamer holds a smartphone horizontally in landscape mode."
+        )
 
     clean_dialogue = " ".join(dialogue.split()).strip() if dialogue else ""
     dialogue_line = (
@@ -96,7 +100,9 @@ def build_omni_prompt(
 # ============================================================================
 
 
-async def _extract_artifact_bytes(tool_context: ToolContext, artifact_name_or_url: str) -> bytes | None:
+async def _extract_artifact_bytes(
+    tool_context: ToolContext, artifact_name_or_url: str
+) -> bytes | None:
     """Helper to retrieve raw bytes from an ADK artifact or local file."""
     try:
         part = await tool_context.load_artifact(artifact_name_or_url)
@@ -118,7 +124,7 @@ async def _extract_artifact_bytes(tool_context: ToolContext, artifact_name_or_ur
 
 
 async def generate_streamer_video(tool_context: ToolContext) -> str:
-    """Renders the Stage 3 continuous streamer reaction video.
+    """Renders continuous streamer reaction video with lip-sync and continuity.
 
     Executes the serial Continuity Chain across all script segments:
     - Segment 0 starts from the Golden Anchor avatar portrait.
@@ -126,11 +132,11 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
     Stitches all clips into a single video deliverable stored in state['artifacts']['streamer_video'].
 
     Call this tool when:
-    - Stage 1 script and Stage 2 avatar are both approved.
+    - Commentary script and streamer avatar are both ready.
     - The user wants to generate the streamer's reaction video.
 
     Returns:
-        Confirmation string with artifact name, duration, and segment count.
+        Confirmation string with duration and segment count.
     """
     state = tool_context.state
     artifacts = state.get("artifacts", {})
@@ -179,7 +185,9 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
         for index, seg in enumerate(segments):
             dur = int(seg.get("duration", 5))
             prompt_text = build_omni_prompt(
-                visual_prompt=seg.get("prompt", "Streamer looks focused and reacts naturally."),
+                visual_prompt=seg.get(
+                    "prompt", "Streamer looks focused and reacts naturally."
+                ),
                 dialogue=seg.get("dialogue", ""),
                 duration_seconds=dur,
                 gaming_device=gaming_device,
@@ -188,7 +196,11 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
             raw_path = os.path.join(work_dir, f"raw_{index}.mp4")
             norm_path = os.path.join(work_dir, f"clip_{index}.mp4")
 
-            start_frame = prev_pose_b64 if (prev_pose_b64 and index > 0) else golden_anchor_data_url
+            start_frame = (
+                prev_pose_b64
+                if (prev_pose_b64 and index > 0)
+                else golden_anchor_data_url
+            )
 
             # Invoke Omni Flash (or synthetic mock in test mode)
             await omni_interaction(
@@ -199,8 +211,8 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
                 dest_path=raw_path,
             )
 
-            # Normalize frame rate, pixel format, and audio
-            await normalize_clip(raw_path, norm_path, fps=30)
+            # Normalize frame rate, pixel format, and audio (canonical 24fps, PTS reset)
+            await normalize_clip(raw_path, norm_path, fps=24)
             rendered_clips.append(norm_path)
 
             # Extract last frame for continuity into next segment
@@ -247,11 +259,10 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
 
         return (
             f"Successfully generated continuous streamer reaction video!\n"
-            f"- Artifact Name: {artifact_name}\n"
             f"- Total Duration: {total_dur}s\n"
             f"- Segments Rendered: {len(segments)}\n"
             f"- Aspect Ratio: {aspect_ratio}\n"
-            f"Streamer track is ready for final composite over gameplay footage."
+            f"Streamer reaction video is ready for final composite over gameplay footage."
         )
 
     finally:
@@ -259,18 +270,18 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
 
 
 async def generate_composite_video(tool_context: ToolContext) -> str:
-    """Renders the Stage 4 final composite video over gameplay footage via FFmpeg.
+    """Renders the final composite video over gameplay footage via FFmpeg.
 
-    Fast (~3 seconds). Decoupled from Stage 3: adjusting PIP placement, layouts,
+    Fast (~3 seconds). Decoupled from reaction video rendering: adjusting PIP placement, layouts,
     audio volumes, or subtitles only calls this tool without re-rendering streamer clips.
 
     Call this tool when:
-    - Stage 3 streamer_video deliverable is ready.
+    - Streamer reaction video deliverable is ready.
     - The user wants the final composite reaction video.
     - The user requests layout changes (e.g. PIP bottom-left), volume tweaks, or subtitle toggles.
 
     Returns:
-        Confirmation string with artifact name, layout, and duration.
+        Confirmation string with layout, audio mix, and duration.
     """
     state = tool_context.state
     artifacts = state.get("artifacts", {})
@@ -280,7 +291,7 @@ async def generate_composite_video(tool_context: ToolContext) -> str:
 
     streamer_artifact_data = artifacts.get("streamer_video")
     if not streamer_artifact_data:
-        return "Cannot generate composite: Missing Stage 3 streamer_video artifact. Run generate_streamer_video first."
+        return "Cannot generate composite: Missing streamer reaction video. Run generate_streamer_video first."
 
     streamer_artifact_name = streamer_artifact_data.get("artifact_name")
     streamer_bytes = await _extract_artifact_bytes(tool_context, streamer_artifact_name)
@@ -325,7 +336,9 @@ async def generate_composite_video(tool_context: ToolContext) -> str:
         subtitles_ass_path: str | None = None
         script_data = artifacts.get("script")
         if subtitles_enabled and script_data and script_data.get("segments"):
-            ass_content = build_ass_from_segments(script_data["segments"], aspect_ratio=aspect_ratio)
+            ass_content = build_ass_from_segments(
+                script_data["segments"], aspect_ratio=aspect_ratio
+            )
             subtitles_ass_path = os.path.join(work_dir, "subtitles.ass")
             with open(subtitles_ass_path, "w", encoding="utf-8") as f:
                 f.write(ass_content)
@@ -372,18 +385,33 @@ async def generate_composite_video(tool_context: ToolContext) -> str:
         )
 
         notes = []
-        if result.get("driftSeconds") and abs(result["driftSeconds"]) >= 1:
-            notes.append(f"- Timing Notice: Gameplay drift of {result['driftSeconds']}s was synchronized to streamer commentary.")
+        drift = result.get("driftSeconds")
+        if drift is not None and abs(drift) >= 1:
+            if drift > 0:
+                notes.append(
+                    f"- The footage is {drift}s shorter than the streamer track, so its last frame is held until the streamer finishes."
+                )
+            else:
+                notes.append(
+                    f"- The streamer track is {abs(drift)}s shorter than the footage, so its last frame is held until the footage finishes."
+                )
+
+        if result.get("gameplayFit") == "contain":
+            aspect = result.get("gameplayAspect") or 1.0
+            shape = "vertical" if aspect < 1.0 else "wide"
+            alt_aspect = "9:16" if aspect_ratio == "16:9" else "16:9"
+            notes.append(
+                f"- The footage is {shape} and this video is {aspect_ratio}, too different a shape to crop without throwing most of the picture away, so it is shown whole with black at the sides. Setting aspectRatio to {alt_aspect} would fill the frame instead."
+            )
 
         return (
             f"Successfully generated final composite reaction video!\n"
-            f"- Artifact Name: {composite_artifact_name}\n"
             f"- Layout: {layout} (PIP placement: {pip_placement})\n"
             f"- Aspect Ratio: {aspect_ratio}\n"
             f"- Audio Mix: Gameplay {gameplay_volume}x, Streamer {streamer_volume}x\n"
             f"- Subtitles: {'Enabled' if subtitles_enabled else 'Disabled'}\n"
             f"- Duration: {result['durationSeconds']}s\n"
-            + ("\n".join(notes) if notes else "")
+            + (("\n" + "\n".join(notes)) if notes else "")
         )
 
     finally:
@@ -394,41 +422,206 @@ async def generate_composite_video(tool_context: ToolContext) -> str:
 # 3. VideoAgent Definition & Dynamic Instruction
 # ============================================================================
 
-VIDEO_AGENT_INSTRUCTION = """You are the expert Post-Production Video Director (VideoAgent).
-You manage the video production and composite phases of GamerHeads:
-1. Stage 3 (Streamer Video): Rendering continuous streamer reaction clips with Omni Flash.
-2. Stage 4 (Composite Video): Fast FFmpeg compositing (PIP/stacked overlay, audio mixing, subtitles).
+VIDEO_AGENT_INSTRUCTION = """You are the expert Post-Production Video Director & Compositor (VideoAgent) in the GamerHeads studio.
+Your purpose is producing polished, lip-synced streamer reaction videos and seamless final composite reaction videos overlaid on gameplay footage.
 
-【DECISION PRINCIPLES】
-- QUERY TRIAGE & SPEC-FIRST RULE:
-  * You own post-production composite settings (`spec.composite`): `layout`, `pipPlacement`, `stackedPlacement`, `gameplayVolume`, `streamerVolume`, `subtitles`.
-  * When a user request arrives, FIRST inspect if it modifies or configures any composite settings (e.g. layout, PIP position, volume mix, subtitles).
-  * If yes, ALWAYS call `update_composite_spec` FIRST to update session state before generating or re-generating the composite!
-- If streamer_video is missing or needs generation, run `generate_streamer_video` first, then run `generate_composite_video`.
-- If streamer_video is already ready and the user only changes layout, volume, or subtitles, NEVER re-render Stage 3. Update spec via `update_composite_spec` first, then call `generate_composite_video` directly (takes ~3s).
+【CORE PRODUCTION PRINCIPLES】
+
+1. QUERY TRIAGE & SPEC-FIRST (Check update_composite_spec options BEFORE generating):
+   - Whenever creator input arrives, FIRST check if the creator is asking to modify, configure, or provide any composite settings.
+   - Check all available parameters in `update_composite_spec`:
+     * `layout`: Video composition layout ('pip' for picture-in-picture, 'stacked' for split screen, 'streamer-only')
+     * `pipPlacement`: Corner position for PIP streamer window ('bottom-right', 'bottom-left', 'top-right', 'top-left')
+     * `stackedPlacement`: Alignment for stacked split screen ('top', 'bottom', 'left', 'right')
+     * `gameplayVolume`: Gameplay background volume multiplier (e.g. 0.8)
+     * `streamerVolume`: Streamer commentary voice volume multiplier (e.g. 1.0)
+     * `subtitles`: Enable or disable burned-in subtitles (True/False)
+   - If the request contains or modifies ANY of these spec options:
+     -> You MUST call `update_composite_spec` FIRST to update session state before any video generation.
+
+2. CONVERGENCE-FIRST & UPSTREAM PREREQUISITES (No script or avatar, no video):
+   - Synthesizing streamer reaction video requires BOTH the commentary script (`script`) and the streamer avatar portrait (`avatar`).
+   - If either is missing, NEVER attempt video generation. Record any provided composite settings via `update_composite_spec`, and inform the Director which upstream asset is missing (commentary script or avatar portrait) so the Director can coordinate with the creator.
+   - For composite video generation with PIP or split-screen layouts, gameplay footage (`footageUrl`) is also required.
+
+3. DECOUPLED POST-PRODUCTION (Protect expensive reaction footage synthesis):
+   - Rendering streamer reaction video clips (image-to-video with lip synchronization and frame continuity) is compute-heavy (~2-3 minutes).
+   - Compositing the final video (FFmpeg PIP overlay, audio mixing, subtitles) is fast and lightweight (~3 seconds).
+   - When streamer reaction video is already rendered and the creator only adjusts composite settings (e.g. moving PIP corner, adjusting volume balance, toggling subtitles):
+     -> Update settings via `update_composite_spec`.
+     -> Call `generate_composite_video` directly.
+     -> NEVER re-render `generate_streamer_video` for layout, volume, or subtitle adjustments!
+
+4. WORKFLOW SYNCHRONIZATION (Keep video aligned with upstream updates):
+   - When the creator requests video generation:
+     -> If streamer reaction video does not exist yet OR is out of sync (e.g. commentary dialogue was edited or avatar changed), call `generate_streamer_video` first to render the reaction video.
+     -> Once streamer reaction video is ready, immediately proceed to call `generate_composite_video` to produce the final composite video.
+
+5. AUDIO & VISUAL HARMONY (Balanced mixing and readable framing):
+   - Maintain clear audio balance: streamer commentary dialogue should always be crisp and prominent over gameplay sounds.
+   - Ensure picture-in-picture streamer window placement respects gameplay visibility and does not obscure critical game UI or action.
+   - When subtitles are enabled, ensure they are synchronized with commentary dialogue beats for high viewer engagement.
+
+6. SPECIALIST DELIVERY (Concise upstream reporting to Director):
+   You are an internal specialist reporting to the Director (main agent). Once all required production actions are complete and your job is finished, concisely synthesize the deliverable:
+   - Provide the video duration, visual composition (layout style and placement), audio mix ratio, and subtitle status.
+   - Share any notable gameplay video fit observations (e.g. vertical vs. horizontal framing fit, timing drift) so the Director can communicate them to the creator.
+   - NEVER report artifact filenames, internal file paths, technical identifiers, or tool names to the Director. All media assets are already saved in session state.
 """
 
 
 def video_agent_instruction(context: ReadonlyContext) -> str:
     state = context.state
     spec = state.get("spec", {})
+    global_spec = spec.get("global", {})
     comp_spec = spec.get("composite", {})
+    artifacts = state.get("artifacts", {})
 
-    lines = [
-        VIDEO_AGENT_INSTRUCTION,
-        "\n【CURRENT COMPOSITE SPEC (OWNED BY VIDEO_AGENT)】",
-        f"- Layout: {comp_spec.get('layout', 'pip')}",
-        f"- PIP Placement: {comp_spec.get('pipPlacement', 'bottom-right')}",
-        f"- Gameplay Volume: {comp_spec.get('gameplayVolume', 0.8)}",
-        f"- Streamer Volume: {comp_spec.get('streamerVolume', 1.0)}",
-        f"- Subtitles: {comp_spec.get('subtitles', True)}",
+    footage_url = global_spec.get("footageUrl", "")
+    gaming_device = global_spec.get("gamingDevice", "PC")
+    aspect_ratio = global_spec.get("aspectRatio", "16:9")
+
+    layout = comp_spec.get("layout", "pip")
+    pip_placement = comp_spec.get("pipPlacement", "bottom-right")
+    stacked_placement = comp_spec.get("stackedPlacement")
+    gameplay_volume = comp_spec.get("gameplayVolume", 0.8)
+    streamer_volume = comp_spec.get("streamerVolume", 1.0)
+    subtitles = comp_spec.get("subtitles", True)
+
+    has_script = "script" in artifacts
+    has_avatar = "avatar" in artifacts
+    has_streamer = "streamer_video" in artifacts
+    has_composite = "composite" in artifacts
+
+    status_lines = [
+        "【CURRENT PRODUCTION SPEC & SESSION STATE】",
+        f"- Gameplay Footage: {footage_url or 'None (Not provided yet)'}",
+        f"- Gaming Platform: {gaming_device}",
+        f"- Video Aspect Ratio: {aspect_ratio}",
+        f"- Video Layout: {layout}",
+        f"- PIP Placement: {pip_placement}",
     ]
-    return "\n".join(lines)
+    if stacked_placement:
+        status_lines.append(f"- Stacked Placement: {stacked_placement}")
+    status_lines.extend(
+        [
+            f"- Gameplay Volume: {gameplay_volume}",
+            f"- Streamer Volume: {streamer_volume}",
+            f"- Subtitles: {'Enabled' if subtitles else 'Disabled'}",
+        ]
+    )
+
+    # Upstream Prerequisites Status
+    status_lines.append("【UPSTREAM PREREQUISITES STATUS】")
+    if has_script:
+        script_art = artifacts.get("script", {})
+        seg_count = (
+            len(script_art.get("segments", []))
+            if isinstance(script_art, dict)
+            else 0
+        )
+        total_dur = (
+            script_art.get("total_duration", 0)
+            if isinstance(script_art, dict)
+            else 0
+        )
+        sc_eval = evaluate_stage_status("script", state)
+        sc_tag = (
+            f" (⚠️ OUT OF SYNC: {sc_eval['summary']})"
+            if sc_eval["status"] == "OUT_OF_SYNC"
+            else " (Ready)"
+        )
+        status_lines.append(
+            f"- Commentary Script: Present ({seg_count} segments, {total_dur}s){sc_tag}"
+        )
+    else:
+        status_lines.append(
+            "- Commentary Script: None drafted yet (Prerequisite for reaction video)"
+        )
+
+    if has_avatar:
+        avatar_art = artifacts.get("avatar", {})
+        av_eval = evaluate_stage_status("avatar", state)
+        av_tag = (
+            f" (⚠️ OUT OF SYNC: {av_eval['summary']})"
+            if av_eval["status"] == "OUT_OF_SYNC"
+            else " (Ready)"
+        )
+        av_desc = (
+            avatar_art.get("appearance", "Persona established")
+            if isinstance(avatar_art, dict)
+            else "Persona established"
+        )
+        status_lines.append(f"- Streamer Avatar: Present ({av_desc}){av_tag}")
+    else:
+        status_lines.append(
+            "- Streamer Avatar: None created yet (Prerequisite for reaction video)"
+        )
+
+    # Video Deliverables Status
+    status_lines.append("【VIDEO DELIVERABLES STATUS】")
+    sv_eval = evaluate_stage_status("streamer_video", state)
+    if has_streamer:
+        sv_art = artifacts.get("streamer_video", {})
+        sv_tag = (
+            f" (⚠️ OUT OF SYNC: {sv_eval['summary']})"
+            if sv_eval["status"] == "OUT_OF_SYNC"
+            else " (Ready)"
+        )
+        dur = (
+            sv_art.get("durationSeconds", 0)
+            if isinstance(sv_art, dict)
+            else 0
+        )
+        segs = (
+            sv_art.get("segmentCount", 0)
+            if isinstance(sv_art, dict)
+            else 0
+        )
+        status_lines.append(
+            f"- Streamer Reaction Video: Present ({dur}s, {segs} clips){sv_tag}"
+        )
+    else:
+        status_lines.append(
+            f"- Streamer Reaction Video: Not generated yet ({sv_eval['summary']})"
+        )
+
+    comp_eval = evaluate_stage_status("composite", state)
+    if has_composite:
+        comp_art = artifacts.get("composite", {})
+        comp_tag = (
+            f" (⚠️ OUT OF SYNC: {comp_eval['summary']})"
+            if comp_eval["status"] == "OUT_OF_SYNC"
+            else " (Ready)"
+        )
+        dur = (
+            comp_art.get("durationSeconds", 0)
+            if isinstance(comp_art, dict)
+            else 0
+        )
+        lay = (
+            comp_art.get("layout", "pip")
+            if isinstance(comp_art, dict)
+            else "pip"
+        )
+        status_lines.append(
+            f"- Final Composite Video: Present ({dur}s, layout: {lay}){comp_tag}"
+        )
+    else:
+        status_lines.append(
+            f"- Final Composite Video: Not generated yet ({comp_eval['summary']})"
+        )
+
+    status_block = "\n".join(status_lines)
+    return f"{VIDEO_AGENT_INSTRUCTION}\n\n{status_block}"
 
 
 video_agent = Agent(
     name="video_agent",
-    model=Gemini(model=MODEL),
+    model=Gemini(
+        model=MODEL,
+        retry_options=types.HttpRetryOptions(attempts=3),
+    ),
     instruction=video_agent_instruction,
     tools=[
         update_composite_spec,

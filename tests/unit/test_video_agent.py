@@ -28,6 +28,7 @@ from app.agents.video_agent import (
     build_omni_prompt,
     generate_composite_video,
     generate_streamer_video,
+    video_agent,
     video_agent_instruction,
 )
 from app.media.clips import get_ffmpeg_exe
@@ -45,7 +46,10 @@ def test_build_omni_prompt_devices():
     assert "<Image0> is the starting frame." in p_pc
     assert "Streamer plays on PC with keyboard and mouse on desk." in p_pc
     assert "Streamer looks naturally at the screen / desk." in p_pc
-    assert 'Streamer dialogue: "Unbelievable!". Natural speaking motion and lip synchronization.' in p_pc
+    assert (
+        'Streamer dialogue: "Unbelievable!". Natural speaking motion and lip synchronization.'
+        in p_pc
+    )
     assert "Duration: 5 seconds." in p_pc
 
     # Console
@@ -63,7 +67,10 @@ def test_build_omni_prompt_devices():
     # Hands-free
     p_hf = build_omni_prompt("Waves", "Hello chat", 4, "Hands-free (No device)")
     assert "Streamer is completely hands-free with empty hands." in p_hf
-    assert "Streamer looks directly into the camera lens with engaging eye contact." in p_hf
+    assert (
+        "Streamer looks directly into the camera lens with engaging eye contact."
+        in p_hf
+    )
 
 
 def test_build_omni_prompt_silence():
@@ -131,6 +138,58 @@ def test_video_agent_instruction():
     assert "Streamer Volume: 1.2" in instruction
 
 
+def test_video_agent_instruction_with_prerequisites_and_deliverables():
+    """Tests that video_agent_instruction reports upstream prerequisites and video deliverables."""
+    mock_ctx = MagicMock(spec=ReadonlyContext)
+    mock_ctx.state = {
+        "spec": {
+            "global": {
+                "footageUrl": "gameplay.mp4",
+                "gamingDevice": "PC",
+                "aspectRatio": "16:9",
+            },
+            "composite": {
+                "layout": "pip",
+                "pipPlacement": "bottom-right",
+                "gameplayVolume": 0.8,
+                "streamerVolume": 1.0,
+                "subtitles": True,
+            },
+        },
+        "artifacts": {
+            "script": {
+                "segments": [{"id": 1, "duration": 4, "dialogue": "Hello"}],
+                "total_duration": 4,
+            },
+            "avatar": {
+                "appearance": "Purple cat in hoodie",
+            },
+            "streamer_video": {
+                "durationSeconds": 4,
+                "segmentCount": 1,
+            },
+            "composite": {
+                "durationSeconds": 4,
+                "layout": "pip",
+            },
+        },
+    }
+    instruction = video_agent_instruction(mock_ctx)
+    assert "Gameplay Footage: gameplay.mp4" in instruction
+    assert "Gaming Platform: PC" in instruction
+    assert "Commentary Script: Present (1 segments, 4s)" in instruction
+    assert "Streamer Avatar: Present (Purple cat in hoodie)" in instruction
+    assert "Streamer Reaction Video: Present (4s, 1 clips)" in instruction
+    assert "Final Composite Video: Present (4s, layout: pip)" in instruction
+
+
+def test_video_agent_model_retry_options():
+    """Tests that video_agent is configured with retry options matching avatar and script agents."""
+    assert video_agent.model is not None
+    assert video_agent.model.retry_options is not None
+    assert video_agent.model.retry_options.attempts == 3
+
+
 # ============================================================================
 # 3. Prerequisites & Blocked Execution Tests
 # ============================================================================
@@ -161,7 +220,7 @@ async def test_generate_composite_video_prerequisites_missing():
 
     res = await generate_composite_video(mock_ctx)
     assert "Cannot generate composite" in res
-    assert "Missing Stage 3 streamer_video" in res
+    assert "Missing streamer reaction video" in res
 
 
 # ============================================================================
@@ -173,10 +232,22 @@ async def _create_test_mp4(path: str, duration: int = 1) -> str:
     ffmpeg = get_ffmpeg_exe()
     cmd = [
         ffmpeg,
-        "-f", "lavfi", "-i", f"color=c=black:s=320x240:d={duration}",
-        "-f", "lavfi", "-i", f"sine=frequency=1000:duration={duration}",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
-        path, "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s=320x240:d={duration}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=1000:duration={duration}",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        path,
+        "-y",
     ]
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -193,10 +264,21 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
         # Create dummy avatar image
         avatar_img = os.path.join(tmpdir, "avatar.png")
         ffmpeg = get_ffmpeg_exe()
-        await (await asyncio.create_subprocess_exec(
-            ffmpeg, "-f", "lavfi", "-i", "color=c=red:s=320x240", "-vframes", "1", avatar_img, "-y",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )).communicate()
+        await (
+            await asyncio.create_subprocess_exec(
+                ffmpeg,
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=320x240",
+                "-vframes",
+                "1",
+                avatar_img,
+                "-y",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        ).communicate()
 
         # Create dummy gameplay video
         gameplay_vid = os.path.join(tmpdir, "gameplay.mp4")
@@ -229,7 +311,12 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
             "artifacts": {
                 "script": {
                     "segments": [
-                        {"id": 1, "duration": 3, "dialogue": "Let's go!", "prompt": "Eyes wide"},
+                        {
+                            "id": 1,
+                            "duration": 3,
+                            "dialogue": "Let's go!",
+                            "prompt": "Eyes wide",
+                        },
                     ]
                 },
                 "avatar": {
@@ -241,11 +328,19 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
 
         async def mock_load_artifact(name: str):
             if "avatar" in name:
-                return types.Part(inline_data=types.Blob(mime_type="image/png", data=avatar_bytes))
+                return types.Part(
+                    inline_data=types.Blob(mime_type="image/png", data=avatar_bytes)
+                )
             if "gameplay" in name:
-                return types.Part(inline_data=types.Blob(mime_type="video/mp4", data=gameplay_bytes))
+                return types.Part(
+                    inline_data=types.Blob(mime_type="video/mp4", data=gameplay_bytes)
+                )
             if name in saved_artifacts:
-                return types.Part(inline_data=types.Blob(mime_type="video/mp4", data=saved_artifacts[name]))
+                return types.Part(
+                    inline_data=types.Blob(
+                        mime_type="video/mp4", data=saved_artifacts[name]
+                    )
+                )
             return None
 
         async def mock_save_artifact(name: str, part: types.Part):
@@ -257,9 +352,13 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
 
         # 1. Run Stage 3: generate_streamer_video
         res_streamer = await generate_streamer_video(mock_ctx)
-        assert "Successfully generated continuous streamer reaction video" in res_streamer
+        assert (
+            "Successfully generated continuous streamer reaction video" in res_streamer
+        )
         assert "streamer_video" in mock_ctx.state["artifacts"]
-        streamer_art_name = mock_ctx.state["artifacts"]["streamer_video"]["artifact_name"]
+        streamer_art_name = mock_ctx.state["artifacts"]["streamer_video"][
+            "artifact_name"
+        ]
         assert streamer_art_name in saved_artifacts
 
         # 2. Run Stage 4: generate_composite_video

@@ -34,13 +34,20 @@ async def create_test_video(path: str, duration: int = 1, color: str = "blue") -
     ffmpeg = get_ffmpeg_exe()
     cmd = [
         ffmpeg,
-        "-f", "lavfi",
-        "-i", f"color=c={color}:s=320x240:d={duration}",
-        "-f", "lavfi",
-        "-i", f"sine=frequency=1000:duration={duration}",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c={color}:s=320x240:d={duration}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=1000:duration={duration}",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
         path,
         "-y",
     ]
@@ -138,4 +145,113 @@ async def test_composite_pip_and_stacked():
             stacked_placement="top",
         )
         assert os.path.exists(stacked_out)
-        assert res_stacked["durationSeconds"] > 0
+        assert round(res_stacked["durationSeconds"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_composite_duration_longest_and_freeze_last_frame():
+    """Verifies that composite total duration is max(streamer, gameplay) and the shorter stream holds its last frame."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Case A: gameplay (3s) > streamer (1s) -> total duration should be 3s
+        streamer_1s = os.path.join(tmpdir, "streamer_1s.mp4")
+        gameplay_3s = os.path.join(tmpdir, "gameplay_3s.mp4")
+        await create_test_video(streamer_1s, duration=1, color="red")
+        await create_test_video(gameplay_3s, duration=3, color="blue")
+
+        out_a = os.path.join(tmpdir, "out_a.mp4")
+        res_a = await composite_streamer_over_gameplay(
+            streamer_path=streamer_1s,
+            gameplay_path=gameplay_3s,
+            output_path=out_a,
+            layout="pip",
+        )
+        assert round(res_a["durationSeconds"]) == 3
+        assert res_a["driftSeconds"] == -2.0
+
+        # Case B: streamer (3s) > gameplay (1s) -> total duration should be 3s
+        streamer_3s = os.path.join(tmpdir, "streamer_3s.mp4")
+        gameplay_1s = os.path.join(tmpdir, "gameplay_1s.mp4")
+        await create_test_video(streamer_3s, duration=3, color="red")
+        await create_test_video(gameplay_1s, duration=1, color="blue")
+
+        out_b = os.path.join(tmpdir, "out_b.mp4")
+        res_b = await composite_streamer_over_gameplay(
+            streamer_path=streamer_3s,
+            gameplay_path=gameplay_1s,
+            output_path=out_b,
+            layout="pip",
+        )
+        assert round(res_b["durationSeconds"]) == 3
+        assert res_b["driftSeconds"] == 2.0
+
+
+def test_plan_composite_geometry():
+    from app.media.composite import plan_composite
+
+    # 1. Picture-in-picture geometry test: 10% of 1920x1080 canvas area
+    plan_pip = plan_composite(
+        "16:9", "picture-in-picture", "bottom-right", None, 16 / 9
+    )
+    streamer_pip = plan_pip["streamer"]
+    area_ratio = (streamer_pip["width"] * streamer_pip["height"]) / (1920 * 1080)
+    assert abs(area_ratio - 0.1) < 0.02  # ~10% area
+
+    # 2. 9:16 Stacked layout test: streamer is 35% of 1920 height = 672
+    plan_stack_v = plan_composite("9:16", "stacked", "bottom-right", "top", 16 / 9)
+    assert plan_stack_v["streamer"]["height"] == 672
+    assert plan_stack_v["gameplay"]["height"] == 1920 - 672
+
+    # 3. 16:9 Stacked layout test: streamer is 30% of 1920 width = 576
+    plan_stack_h = plan_composite("16:9", "stacked", "bottom-right", "left", 16 / 9)
+    assert plan_stack_h["streamer"]["width"] == 576
+    assert plan_stack_h["gameplay"]["width"] == 1920 - 576
+
+
+def test_subtitles_dejavu_font_and_scaling():
+    from app.media.subtitles import SUBTITLE_FONT, build_ass_from_segments
+
+    assert SUBTITLE_FONT == "DejaVu Sans"
+
+    segments = [{"duration": 4, "dialogue": "[Gasping] Look at that dragon!"}]
+    ass_1080p = build_ass_from_segments(segments, aspect_ratio="16:9")
+    assert "DejaVu Sans" in ass_1080p
+    assert "Look at that dragon!" in ass_1080p
+    assert "[Gasping]" not in ass_1080p
+
+
+@pytest.mark.asyncio
+async def test_omni_silent_rejection(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.media.omni import omni_interaction
+
+    monkeypatch.delenv("MOCK_OMNI", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.ok = True
+    mock_resp.json = AsyncMock(
+        return_value={"status": "completed", "usage": {"total_input_tokens": 0}}
+    )
+
+    mock_post_cm = MagicMock()
+    mock_post_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_post_cm.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_post_cm)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aiohttp.ClientSession", return_value=mock_session):
+        with pytest.raises(RuntimeError) as exc:
+            await omni_interaction(
+                prompt="test",
+                start_frame_base64="data:image/png;base64,AAAA",
+                duration_seconds=3,
+                aspect_ratio="16:9",
+                dest_path="dummy.mp4",
+                mock=False,
+            )
+        assert "silently rejected source image" in str(exc.value)

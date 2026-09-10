@@ -19,6 +19,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Default font: DejaVu Sans is bundled and available on headless Linux / container runtimes
+SUBTITLE_FONT = "DejaVu Sans"
+
 
 def format_ass_time(seconds: float) -> str:
     """Formats seconds into ASS timestamp format: H:MM:SS.cs."""
@@ -33,8 +36,9 @@ def format_ass_time(seconds: float) -> str:
 
 
 def clean_dialogue_for_subtitles(dialogue: str) -> str:
-    """Removes bracketed vocal direction cues (e.g. [Laughing], [Shouting]) from visible subtitles."""
+    """Removes bracketed vocal direction cues (e.g. [Laughing], (gasp)) from visible subtitles."""
     cleaned = re.sub(r"\[.*?\]", "", dialogue)
+    cleaned = re.sub(r"\(.*?\)", "", cleaned)
     return " ".join(cleaned.split()).strip()
 
 
@@ -43,6 +47,12 @@ def build_ass_from_segments(
     aspect_ratio: str = "16:9",
 ) -> str:
     """Constructs Advanced SubStation Alpha (.ass) subtitle file content from shot list segments.
+
+    Dynamically calculates font size, outline, shadow, and margins based on video height:
+      fontSize = ~4.2% of height (clamped 26..64)
+      outline  = ~10% of fontSize (min 3)
+      shadow   = ~6% of fontSize  (min 2)
+      marginV  = ~7% of height    (min 40)
 
     Args:
         segments: List of segment dicts containing 'duration' and 'dialogue'.
@@ -54,8 +64,17 @@ def build_ass_from_segments(
     is_vertical = aspect_ratio == "9:16"
     res_x = 1080 if is_vertical else 1920
     res_y = 1920 if is_vertical else 1080
-    font_size = 44 if is_vertical else 48
-    margin_v = 140 if is_vertical else 60
+
+    font_size = max(26, min(64, round(res_y * 0.042)))
+    outline = max(3, round(font_size * 0.1))
+    shadow = max(2, round(font_size * 0.06))
+    margin_v = max(40, round(res_y * 0.07))
+
+    style_line = (
+        f"Style: Default,{SUBTITLE_FONT},{font_size},&H00FFFFFF,&H000000FF,"
+        f"&H00000000,&H80000000,1,0,0,0,100,100,0.4,0,1,{outline},{shadow},"
+        f"2,80,80,{margin_v},1"
+    )
 
     header = f"""[Script Info]
 Title: GamerHeads Subtitles
@@ -67,7 +86,7 @@ PlayResY: {res_y}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,40,40,{margin_v},1
+{style_line}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -85,8 +104,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         raw_dialogue = seg.get("dialogue", "")
         clean_text = clean_dialogue_for_subtitles(raw_dialogue)
         if clean_text:
-            # Escape commas in text or sanitize
-            escaped = clean_text.replace("\n", " ").replace("\\", "")
+            escaped = (
+                clean_text.replace("\n", "\\N").replace("{", "\\{").replace("}", "\\}")
+            )
             lines.append(f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{escaped}")
 
     return "\n".join(lines) + "\n"
