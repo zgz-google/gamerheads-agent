@@ -328,7 +328,7 @@ async def omni_interaction(
 
     logger.info(
         "[omni] generating clip (%s, image_to_video, %ss, %s, continuity=%s)",
-        model_id,
+        OMNI_MODEL,
         duration_seconds,
         aspect_ratio,
         continuity,
