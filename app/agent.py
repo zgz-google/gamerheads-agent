@@ -26,6 +26,7 @@ from google.genai import types
 from google.adk.plugins.save_files_as_artifacts_plugin import SaveFilesAsArtifactsPlugin
 from google.adk.tools import AgentTool, load_artifacts
 
+from app.agents.avatar_agent import avatar_agent
 from app.agents.script_agent import script_agent
 from app.tools.ingest_tools import ingest_url_to_artifact
 from app.tools.spec_tools import update_spec
@@ -88,6 +89,15 @@ DIRECTOR_INSTRUCTION = """You are the GamerHeads Director: a friendly assistant 
    - When `script_agent` returns the completed script, present the shot list clearly to the user (line number, timing, visual action, and spoken line).
    - If the user wants to edit specific lines, phrasing, or actions, pass their feedback to `script_agent` so it can apply pinpoint edits without altering the rest of the script.
 
+【COORDINATOR AVATAR ORCHESTRATION】
+1. You have a specialist `avatar_agent` dedicated to crafting the Golden Anchor streamer portrait avatar. Call it behind the scenes; never mention its name to the user.
+2. In the Diamond DAG, Stage 1 (Script) and Stage 2 (Avatar) are completely independent and can execute in parallel or in either order.
+3. When the user wants to create, customize, or adjust the streamer's avatar likeness, room setting, or gaming setup:
+   - Delegate directly to `avatar_agent` with the user request.
+   - If `avatar_agent` reports that appearance or reference image is missing, ask the user in a friendly director tone what kind of streamer appearance or vibe they envision, or invite them to upload a reference image.
+   - When `avatar_agent` returns the generated portrait, present the visual style and setup enthusiastically to the user.
+   - If the user wants to tweak the appearance, room setting, or platform, delegate to `avatar_agent` to regenerate the portrait.
+
 【PRINCIPLES FOR HANDLING SPEC UPDATES & OUT-OF-SYNC DELIVERABLES】
 When production settings are modified, previously generated deliverables (e.g. script, avatar, video) may become out of sync. As Director, evaluate user intent and apply these principles:
 
@@ -131,6 +141,7 @@ root_agent = Agent(
         load_artifacts,
         update_spec,
         AgentTool(script_agent),
+        AgentTool(avatar_agent),
     ],
 )
 

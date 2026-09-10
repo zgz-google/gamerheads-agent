@@ -14,6 +14,7 @@
 
 """Specialist agents for GamerHeads Director."""
 
+from app.agents.avatar_agent import avatar_agent
 from app.agents.script_agent import script_agent
 
-__all__ = ["script_agent"]
+__all__ = ["avatar_agent", "script_agent"]
