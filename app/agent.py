@@ -195,9 +195,7 @@ def director_instruction(context: ReadonlyContext) -> str:
 
     kanban = render_pipeline_kanban(state)
 
-    return (
-        f"{DIRECTOR_INSTRUCTION}\n\n{chr(10).join(project_settings_lines)}\n\n{kanban}"
-    )
+    return f"{chr(10).join(project_settings_lines)}\n\n{kanban}"
 
 
 root_agent = Agent(
@@ -206,6 +204,7 @@ root_agent = Agent(
         model=MODEL,
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
+    static_instruction=DIRECTOR_INSTRUCTION,
     instruction=director_instruction,
     tools=[
         ingest_url_to_artifact,

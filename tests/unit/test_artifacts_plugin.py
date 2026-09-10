@@ -111,3 +111,41 @@ async def test_plugin_intercepts_inline_data():
     )
     assert saved_artifact is not None
     assert saved_artifact.inline_data.data == b"hello world"
+
+
+def test_root_agent_instruction_layering():
+    """Verify that root_agent uses static_instruction for rules and dynamic instruction for Kanban."""
+    from unittest.mock import MagicMock
+    from google.adk.agents.readonly_context import ReadonlyContext
+
+    # Verify static_instruction is configured
+    assert root_agent.static_instruction is not None
+    assert "You lead a creative studio" in root_agent.static_instruction
+
+    # Verify dynamic instruction is a callable
+    assert callable(root_agent.instruction)
+
+    # Test dynamic instruction evaluation with state
+    mock_ctx = MagicMock(spec=ReadonlyContext)
+    mock_ctx.state = {
+        "spec": {
+            "global": {
+                "footageUrl": "test_gameplay.mp4",
+                "gamingDevice": "PC",
+                "aspectRatio": "16:9",
+            }
+        },
+        "artifacts": {
+            "avatar": {
+                "artifact_name": "output_avatar_test1234.png",
+                "appearance": "cyberpunk cat",
+            }
+        },
+    }
+
+    dynamic_text = root_agent.instruction(mock_ctx)
+    assert "【CURRENT PROJECT SETTINGS】" in dynamic_text
+    assert "test_gameplay.mp4" in dynamic_text
+    assert "【PRODUCTION PIPELINE REAL-TIME KANBAN】" in dynamic_text
+    assert "output_avatar_test1234.png" in dynamic_text
+
