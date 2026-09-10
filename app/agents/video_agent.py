@@ -147,8 +147,6 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
     eval_status = evaluate_stage_status("streamer_video", state)
     if eval_status["status"] == "BLOCKED":
         return f"Cannot generate streamer video: {eval_status['summary']}"
-    if eval_status["status"] == "OUT_OF_SYNC":
-        return f"Cannot generate streamer video: Upstream assets are out of date ({eval_status['summary']}). Please regenerate script or avatar first."
 
     script_data = artifacts.get("script")
     avatar_data = artifacts.get("avatar")
@@ -292,6 +290,10 @@ async def generate_composite_video(tool_context: ToolContext) -> str:
     streamer_artifact_data = artifacts.get("streamer_video")
     if not streamer_artifact_data:
         return "Cannot generate composite: Missing streamer reaction video. Run generate_streamer_video first."
+
+    sv_status = evaluate_stage_status("streamer_video", state)
+    if sv_status["status"] == "OUT_OF_SYNC":
+        return f"Cannot generate composite: Streamer reaction video is out of sync with updated script or avatar ({sv_status['summary']}). Please re-render streamer reaction video via generate_streamer_video first."
 
     streamer_artifact_name = streamer_artifact_data.get("artifact_name")
     streamer_bytes = await _extract_artifact_bytes(tool_context, streamer_artifact_name)
@@ -452,10 +454,11 @@ Your purpose is producing polished, lip-synced streamer reaction videos and seam
      -> Call `generate_composite_video` directly.
      -> NEVER re-render `generate_streamer_video` for layout, volume, or subtitle adjustments!
 
-4. WORKFLOW SYNCHRONIZATION (Keep video aligned with upstream updates):
-   - When the creator requests video generation:
-     -> If streamer reaction video does not exist yet OR is out of sync (e.g. commentary dialogue was edited or avatar changed), call `generate_streamer_video` first to render the reaction video.
-     -> Once streamer reaction video is ready, immediately proceed to call `generate_composite_video` to produce the final composite video.
+4. DECOUPLED STAGING & DISCIPLINED EXECUTION (One video stage per request):
+   - You handle two distinct production stages: Stage 3 (Streamer Reaction Video via `generate_streamer_video`) and Stage 4 (Composite Post-Production via `generate_composite_video`).
+   - Execute ONLY the stage requested by the Director:
+     * When asked to render or re-render streamer reaction video: call `generate_streamer_video`, report the generated reaction deliverable, and STOP. Do NOT automatically proceed to call `generate_composite_video` in the same turn—allow the Director and creator to review and confirm the reaction performance first.
+     * When asked to composite or re-composite final video: update composite settings via `update_composite_spec` if requested, call `generate_composite_video`, and report the composite deliverable.
 
 5. AUDIO & VISUAL HARMONY (Balanced mixing and readable framing):
    - Maintain clear audio balance: streamer commentary dialogue should always be crisp and prominent over gameplay sounds.

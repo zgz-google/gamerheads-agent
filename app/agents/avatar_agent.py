@@ -322,7 +322,10 @@ async def generate_golden_anchor_avatar(tool_context: ToolContext) -> str:
         f"- Gaming Platform: {device}\n"
         f"- Appearance: {appearance or 'Consistent with reference persona'}\n"
         f"- Room Setting: {setting or 'Default studio'}\n\n"
-        f"The Golden Anchor portrait is locked in session state as the visual continuity anchor for Stage 3 video rendering."
+        f"The Golden Anchor portrait is locked in session state as the visual continuity anchor for Stage 3 video rendering.\n\n"
+        f"⚠️ MILESTONE GATE: Streamer avatar deliverable generated/updated. "
+        f"State explicitly to the Director: Present this avatar portrait to the creator and wait until the creator explicitly confirms they are satisfied before proceeding to the next step. "
+        f"Do NOT trigger video generation in this turn."
     )
 
 
@@ -367,6 +370,10 @@ Your sole purpose is creating and refining the streamer's "Golden Anchor" portra
      -> If NO avatar deliverable exists yet and the user was only exploring concepts without asking to draw:
         Do NOT generate yet; confirm the updated setting back to the Director.
    - After generation, provide a clear, enthusiastic summary of the avatar's visual style, background, and platform setup back to the Director.
+   - MILESTONE GATE IN REPORTING:
+     Whenever you generate or update the avatar portrait deliverable, you MUST explicitly state in your final response to the Director:
+     "【阶段门禁 / MILESTONE GATE】主播肖像产物已生成/更新。请先呈递给用户预览并确认是否满意。必须在用户明确确认满意后, 方可推进下一步 (严禁自动进入反应视频生成)。"
+     This ensures the Director halts and waits for creator approval before taking any further action.
 """
 
 

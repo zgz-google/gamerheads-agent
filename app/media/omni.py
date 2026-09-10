@@ -30,7 +30,7 @@ from app.media.clips import get_ffmpeg_exe
 
 load_dotenv()
 
-OMNI_MODEL = os.getenv("OMNI_MODEL", "gemini-omni-1.1-flash-preview")
+OMNI_MODEL = os.getenv("OMNI_MODEL", "gemini-omni-flash-preview")
 MAX_ATTEMPTS = 3
 ATTEMPT_TIMEOUT_SECONDS = 180
 

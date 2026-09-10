@@ -532,6 +532,9 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
     return (
         f"Successfully generated script with {len(final_segments)} segments (Total: {total_dur}s):\n\n"
         + "\n".join(lines_summary)
+        + "\n\n⚠️ MILESTONE GATE: Commentary script deliverable generated. "
+        "State explicitly to the Director: Present these commentary lines to the creator and wait until the creator explicitly confirms they are satisfied before proceeding to the next step. "
+        "Do NOT trigger video generation in this turn."
     )
 
 
@@ -608,7 +611,13 @@ async def edit_script_lines(
             f'Line {s["id"]}{marker} [{s.get("startTime", "00:00")} - {s.get("endTime", "00:00")} ({s.get("duration", 6)}s)]: "{s.get("dialogue", "")}"'
         )
 
-    return f"Successfully updated line(s) {modified}:\n\n" + "\n".join(lines_summary)
+    return (
+        f"Successfully updated line(s) {modified}:\n\n"
+        + "\n".join(lines_summary)
+        + "\n\n⚠️ MILESTONE GATE: Commentary script deliverable modified. "
+        "State explicitly to the Director: Present the updated commentary lines to the creator and wait until the creator explicitly confirms they are satisfied before proceeding to the next step. "
+        "Do NOT trigger video generation in this turn."
+    )
 
 
 # ============================================================================
@@ -657,6 +666,10 @@ Your purpose is creating and maintaining high-energy, synchronized gameplay comm
    - Provide ONLY the line timings (timestamps and duration) and spoken dialogue (`dialogue`) for each segment.
    - NEVER include physical actions, body movements, gestures, micro-expressions, or camera prompts (`prompt` / `on_screen`) in your report to the Director. All visual actions and framing prompts are already preserved in session state artifacts (`artifacts.script`) for downstream video generation.
    - Include any single high-value creative enhancement recommendation for the Director to pose to the creator.
+   - MILESTONE GATE IN REPORTING:
+     Whenever you generate or modify the commentary script deliverable, you MUST explicitly state in your final response to the Director:
+     "【阶段门禁 / MILESTONE GATE】解说脚本产物已生成/更新。请先呈递给用户预览并确认是否满意。必须在用户明确确认满意后, 方可推进下一步 (严禁自动进入反应视频生成)。"
+     This ensures the Director halts and waits for creator approval before taking any further action.
 """
 
 

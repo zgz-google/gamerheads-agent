@@ -223,6 +223,61 @@ async def test_generate_composite_video_prerequisites_missing():
     assert "Missing streamer reaction video" in res
 
 
+@pytest.mark.asyncio
+async def test_generate_composite_video_blocks_when_streamer_video_out_of_sync():
+    """Tests that generate_composite_video refuses to composite if streamer_video is out of sync."""
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {
+        "spec": {"global": {"aspectRatio": "16:9", "footageUrl": "gameplay.mp4"}},
+        "artifacts": {
+            "script": {
+                "segments": [{"id": 1, "duration": 3, "dialogue": "New dialogue"}],
+                "_updated_at": 200.0,
+            },
+            "avatar": {
+                "artifact_name": "avatar.png",
+                "_updated_at": 100.0,
+            },
+            "streamer_video": {
+                "artifact_name": "old_streamer.mp4",
+                "_updated_at": 150.0,  # Older than script!
+            },
+        },
+    }
+
+    res = await generate_composite_video(mock_ctx)
+    assert "Cannot generate composite" in res
+    assert "Streamer reaction video is out of sync" in res
+
+
+@pytest.mark.asyncio
+async def test_generate_streamer_video_not_blocked_when_out_of_sync():
+    """Tests that generate_streamer_video is NOT blocked when existing streamer_video is out of sync."""
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {
+        "spec": {"global": {"aspectRatio": "16:9"}},
+        "artifacts": {
+            "script": {
+                "segments": [],  # Empty segments will test that it proceeds past prerequisite checks
+                "_updated_at": 200.0,
+            },
+            "avatar": {
+                "artifact_name": "avatar.png",
+                "_updated_at": 100.0,
+            },
+            "streamer_video": {
+                "artifact_name": "old_streamer.mp4",
+                "_updated_at": 150.0,  # Older than script!
+            },
+        },
+    }
+
+    res = await generate_streamer_video(mock_ctx)
+    # It should not say "Upstream assets are out of date", it should proceed to script validation
+    assert "Upstream assets are out of date" not in res
+    assert "Script contains no commentary segments" in res
+
+
 # ============================================================================
 # 4. End-to-End Execution with Mock Artifacts
 # ============================================================================
