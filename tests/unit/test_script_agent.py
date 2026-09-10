@@ -27,6 +27,7 @@ from app.agents.script_agent import (
     clamp_segments,
     compute_timeline,
     edit_script_lines,
+    research_game,
     script_agent,
     watch_gameplay_and_generate_script,
 )
@@ -267,8 +268,8 @@ async def test_watch_gameplay_and_generate_script_success():
 
 
 @pytest.mark.asyncio
-async def test_watch_gameplay_and_generate_script_with_grounding_propagation():
-    """Tests that searchGrounding propagates to model call and extracts groundingUrls."""
+async def test_watch_gameplay_and_generate_script_requires_research_when_grounding_enabled():
+    """Tests that watch_gameplay_and_generate_script blocks and requires research_game when grounding is on without facts."""
     mock_ctx = MagicMock(spec=ToolContext)
     mock_ctx.state = {
         "spec": {
@@ -280,7 +281,42 @@ async def test_watch_gameplay_and_generate_script_with_grounding_propagation():
                 "searchGrounding": True,
                 "gameUrl": "https://ea.com/apex",
             },
-        }
+        },
+        "artifacts": {},
+    }
+    mock_part = types.Part(
+        inline_data=types.Blob(
+            mime_type="video/mp4",
+            data=b"fake_mp4_bytes",
+        )
+    )
+    mock_ctx.load_artifact = AsyncMock(return_value=mock_part)
+
+    res = await watch_gameplay_and_generate_script(mock_ctx)
+    assert "Cannot generate script yet: Google Search grounding is enabled for 'Apex Legends'" in res
+    assert "Please call the 'research_game' tool first" in res
+
+
+@pytest.mark.asyncio
+async def test_watch_gameplay_and_generate_script_with_grounding_propagation():
+    """Tests that searchGrounding and research artifact propagate to model call and produce valid script."""
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {
+        "spec": {
+            "global": {
+                "footageUrl": "imported_gameplay.mp4",
+            },
+            "script": {
+                "game": "Apex Legends",
+                "searchGrounding": True,
+                "gameUrl": "https://ea.com/apex",
+            },
+        },
+        "artifacts": {
+            "research": {
+                "facts": "Season 20 features Armor Core and Upgrade Banners.",
+            }
+        },
     }
     mock_part = types.Part(
         inline_data=types.Blob(
@@ -303,8 +339,36 @@ async def test_watch_gameplay_and_generate_script_with_grounding_propagation():
             }
         ]
     )
+
+    with patch("google.genai.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.return_value = fake_response
+
+        res = await watch_gameplay_and_generate_script(mock_ctx)
+
+    assert "Successfully generated script with 1 segments" in res
+    assert mock_ctx.state["artifacts"]["script"]["total_duration"] == 5
+
+
+@pytest.mark.asyncio
+async def test_research_game_success():
+    """Tests that research_game successfully queries Google Search and saves facts to artifacts['research']."""
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {
+        "spec": {
+            "script": {
+                "game": "Black Myth: Wukong",
+                "gameUrl": "https://heishenhua.com",
+            }
+        },
+        "artifacts": {},
+    }
+
+    fake_response = MagicMock()
+    fake_response.text = "- 72 Transformations mechanic\n- Focus points and stance switching"
     chunk_mock = MagicMock()
-    chunk_mock.web.uri = "https://ea.com/apex-news-123"
+    chunk_mock.web.uri = "https://heishenhua.com/mechanics"
     fake_response.candidates = [
         MagicMock(grounding_metadata=MagicMock(grounding_chunks=[chunk_mock]))
     ]
@@ -314,12 +378,26 @@ async def test_watch_gameplay_and_generate_script_with_grounding_propagation():
         mock_client_cls.return_value = mock_client
         mock_client.models.generate_content.return_value = fake_response
 
-        res = await watch_gameplay_and_generate_script(mock_ctx)
+        res = await research_game(mock_ctx)
 
-    assert "https://ea.com/apex-news-123" in res
-    assert mock_ctx.state["artifacts"]["script"]["groundingUrls"] == [
-        "https://ea.com/apex-news-123"
-    ]
+    assert "Successfully researched authentic gameplay facts" in res
+    assert "72 Transformations mechanic" in res
+    assert "https://heishenhua.com/mechanics" in res
+
+    research_artifact = mock_ctx.state["artifacts"]["research"]
+    assert "72 Transformations mechanic" in research_artifact["facts"]
+    assert research_artifact["sources"] == ["https://heishenhua.com/mechanics"]
+    assert "researchedFacts" not in mock_ctx.state["spec"].get("script", {})
+
+
+@pytest.mark.asyncio
+async def test_research_game_missing_title():
+    """Tests research_game error handling when no title or query is provided."""
+    mock_ctx = MagicMock(spec=ToolContext)
+    mock_ctx.state = {"spec": {"script": {}}}
+
+    res = await research_game(mock_ctx)
+    assert "Cannot research game: No game title has been provided" in res
 
 
 def test_script_agent_attributes():
@@ -331,6 +409,7 @@ def test_script_agent_attributes():
     ]
     assert tool_names == [
         "update_script_spec",
+        "research_game",
         "watch_gameplay_and_generate_script",
         "edit_script_lines",
     ]

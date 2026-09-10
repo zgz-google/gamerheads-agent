@@ -209,6 +209,7 @@ PARAM_DEPENDENCIES: dict[str, dict[str, Any]] = {
 
 # Artifact-to-artifact dependencies declaring which downstream artifacts consume which upstream artifacts.
 ARTIFACT_DEPENDENCIES: dict[str, list[str]] = {
+    "research": ["script"],
     "script": ["streamer_video"],
     "avatar": ["streamer_video"],
     "streamer_video": ["composite"],
@@ -216,6 +217,7 @@ ARTIFACT_DEPENDENCIES: dict[str, list[str]] = {
 }
 
 ARTIFACT_CASCADE_REASONS: dict[str, str] = {
+    "script": "Upstream game research notes updated; commentary dialogue and facts need re-drafting.",
     "streamer_video": "Upstream script or avatar asset changed; streamer spoken dialogue and reactions need re-rendering.",
     "composite": "Upstream video track or footage changed; composite video needs re-compositing.",
 }

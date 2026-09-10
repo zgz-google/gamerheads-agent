@@ -284,6 +284,106 @@ CRITICAL INSTRUCTION:
 # ============================================================================
 
 
+async def research_game(
+    tool_context: ToolContext,
+    query: str | None = None,
+) -> str:
+    """Researches authentic game mechanics, lore, features, and terminology using Google Search.
+
+    Call this tool when:
+    - The user wants to explore what makes the game special (Exploratory / Research intent).
+    - Google Search grounding is enabled (`searchGrounding=True`) and authentic facts need to be gathered before drafting the commentary script.
+
+    Args:
+        query: Optional specific search query or focus area (e.g. 'combat mechanics', 'lore details').
+        tool_context: The ADK tool context.
+
+    Returns:
+        A summary of researched gameplay features, mechanics, and terminology saved to session state.
+    """
+    state = tool_context.state
+    spec = state.get("spec", {})
+    script_spec = spec.get("script", {})
+
+    game = (script_spec.get("game") or "").strip()
+    game_url = (script_spec.get("gameUrl") or "").strip()
+
+    if not game and not query:
+        return (
+            "Cannot research game: No game title has been provided. "
+            "Please specify the game name first or record it via 'update_script_spec'."
+        )
+
+    search_target = (
+        f"{game} {query}".strip()
+        if query and game
+        else (
+            query.strip()
+            if query
+            else f"{game} gameplay mechanics features unique terminology {game_url}".strip()
+        )
+    )
+
+    client = genai.Client()
+    prompt = (
+        f"You are a gaming researcher. Conduct research on the game: '{game or query}'. "
+        f"Target query / focus: {search_target}. "
+        + (
+            f"Official website or store URL: {game_url}. Prioritize verified information from this URL. "
+            if game_url
+            else ""
+        )
+        + "Summarize 3-5 authentic gameplay features, unique combat/play mechanics, notable updates, "
+        "and authentic player community slang/terminology that a streamer would naturally mention in high-energy commentary. "
+        "Keep it concise, factual, and punchy."
+    )
+
+    grounding_urls: list[str] = []
+    try:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+            ),
+        )
+        researched_facts = response.text or ""
+        if response.candidates and response.candidates[0].grounding_metadata:
+            for chunk in (
+                response.candidates[0].grounding_metadata.grounding_chunks or []
+            ):
+                if chunk.web and chunk.web.uri:
+                    grounding_urls.append(chunk.web.uri)
+    except Exception as e:
+        return f"Error conducting game research via Google Search: {e}"
+
+    if not researched_facts.strip():
+        return "Google Search did not return any usable research facts. Please refine the query or game title."
+
+    # Persist researched facts as an artifact deliverable in session state
+    record_artifact(
+        state,
+        "research",
+        {
+            "game": game or query,
+            "facts": researched_facts.strip(),
+            "sources": grounding_urls,
+        },
+    )
+
+    sources_str = (
+        "\n\nSources:\n" + "\n".join(f"- {u}" for u in grounding_urls)
+        if grounding_urls
+        else ""
+    )
+    return (
+        f"Successfully researched authentic gameplay facts for '{game or query}':\n\n"
+        f"{researched_facts.strip()}"
+        f"{sources_str}\n\n"
+        "These authentic facts are now saved in session state and will be incorporated into commentary script generation."
+    )
+
+
 async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
     """Watches the gameplay footage registered in session state and writes the timed shot list.
 
@@ -302,6 +402,7 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
     spec = state.get("spec", {})
     global_spec = spec.get("global", {})
     script_spec = spec.get("script", {})
+    artifacts = state.get("artifacts", {})
 
     footage_target = global_spec.get("footageUrl")
 
@@ -349,14 +450,24 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
             "Please ensure the file was ingested as an artifact or is a valid URL."
         )
 
-    # 2. Build prompt
+    # 2. Build prompt and check research prerequisites
     title = script_spec.get("game", "")
     cta = script_spec.get("cta", "")
     device = global_spec.get("gamingDevice", "PC")
     additional_notes = script_spec.get("additionalInstructions", "")
     search_grounding = script_spec.get("searchGrounding", False)
     game_url = script_spec.get("gameUrl", "")
-    researched_facts = ""
+
+    researched_facts = artifacts.get("research", {}).get("facts", "")
+
+    if search_grounding and not researched_facts:
+        target_name = title or "this game"
+        return (
+            f"Cannot generate script yet: Google Search grounding is enabled for '{target_name}', "
+            "but authentic research facts have not been gathered yet. "
+            "Please call the 'research_game' tool first to retrieve verified gameplay mechanics, "
+            "lore, and features before generating the commentary script."
+        )
 
     user_prompt = build_script_prompt(
         title=title,
@@ -376,11 +487,6 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
         user_prompt,
     ]
 
-    tools = (
-        [types.Tool(google_search=types.GoogleSearch())] if search_grounding else None
-    )
-
-    grounding_urls: list[str] = []
     try:
         response = client.models.generate_content(
             model=MODEL,
@@ -389,76 +495,12 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
                 system_instruction=SCRIPT_SYSTEM_INSTRUCTION,
                 response_mime_type="application/json",
                 response_schema=list[Segment],
-                tools=tools,
             ),
         )
         raw_text = response.text or "[]"
         raw_segments = json.loads(raw_text)
-
-        # Extract grounding URLs if returned
-        if response.candidates and response.candidates[0].grounding_metadata:
-            for chunk in (
-                response.candidates[0].grounding_metadata.grounding_chunks or []
-            ):
-                if chunk.web and chunk.web.uri:
-                    grounding_urls.append(chunk.web.uri)
-
     except Exception as err:
-        err_str = str(err)
-        # Handle environments where controlled generation and search tools cannot coexist in a single call
-        if search_grounding and "controlled generation is not supported" in err_str:
-            try:
-                # 1. First gather grounding facts via Google Search
-                search_query = f"{title} gameplay mechanics updates {game_url}".strip()
-                search_resp = client.models.generate_content(
-                    model=MODEL,
-                    contents=f"Summarize key gameplay features, unique mechanics, and terminology for: {search_query}",
-                    config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())],
-                    ),
-                )
-                if (
-                    search_resp.candidates
-                    and search_resp.candidates[0].grounding_metadata
-                ):
-                    for chunk in (
-                        search_resp.candidates[0].grounding_metadata.grounding_chunks
-                        or []
-                    ):
-                        if chunk.web and chunk.web.uri:
-                            grounding_urls.append(chunk.web.uri)
-
-                researched_facts = search_resp.text or ""
-                # 2. Re-prompt with the retrieved facts injected
-                updated_prompt = build_script_prompt(
-                    title=title,
-                    cta=cta,
-                    device=device,
-                    additional_instructions=additional_notes,
-                    search_grounding=True,
-                    game_url=game_url,
-                    researched_facts=researched_facts,
-                )
-                response = client.models.generate_content(
-                    model=MODEL,
-                    contents=[
-                        types.Part.from_bytes(data=video_bytes, mime_type=mime_type),
-                        updated_prompt,
-                    ],
-                    config=types.GenerateContentConfig(
-                        system_instruction=SCRIPT_SYSTEM_INSTRUCTION,
-                        response_mime_type="application/json",
-                        response_schema=list[Segment],
-                    ),
-                )
-                raw_text = response.text or "[]"
-                raw_segments = json.loads(raw_text)
-            except Exception as inner_err:
-                return (
-                    f"Error executing script model with grounding fallback: {inner_err}"
-                )
-        else:
-            return f"Error executing script model: {err}"
+        return f"Error executing script model: {err}"
 
     if not isinstance(raw_segments, list) or len(raw_segments) == 0:
         return "Error: Script model returned an empty segment list."
@@ -476,7 +518,6 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
             if final_segments
             else 0,
             "device": device,
-            "groundingUrls": grounding_urls,
         },
     )
 
@@ -490,28 +531,33 @@ async def watch_gameplay_and_generate_script(tool_context: ToolContext) -> str:
             f'  - Dialogue: "{s["dialogue"]}"'
         )
 
-    grounding_info = (
-        f"\n\nGrounding Sources ({len(grounding_urls)} URLs):\n"
-        + "\n".join(f"- {u}" for u in grounding_urls)
-        if grounding_urls
-        else ""
-    )
-
     return (
         f"Successfully generated script with {len(final_segments)} segments (Total: {total_dur}s):\n\n"
         + "\n\n".join(lines_summary)
-        + grounding_info
     )
 
 
 class LineEditItem(BaseModel):
     line: int = Field(description="Which line to change, numbered from 1")
     dialogue: str | None = Field(
-        default=None, description="The new spoken line, or None to keep unchanged"
+        default=None,
+        description=(
+            "The new spoken commentary line, or None to keep unchanged. "
+            "Must include expressive vocal tags in brackets (e.g. [Laughing], [Shouting]). "
+            "Spoken word count must strictly match segment duration: "
+            "3s: 4-5 words | 4s: 5-7 words | 5s: 7-10 words | 6s: 10-13 words | "
+            "7s: 13-16 words | 8s: 16-19 words | 9s: 19-22 words | 10s: 22-25 words. "
+            "Never output 1-2 word lines for multi-second clips."
+        ),
     )
     on_screen: str | None = Field(
         default=None,
-        description="The new visual streamer action, or None to keep unchanged",
+        description=(
+            "The new visual streamer action, or None to keep unchanged. "
+            "Must ALWAYS use gender-neutral pronouns ('they' / 'them'), never 'he' or 'she'. "
+            "Describe ONLY pure human micro-expressions, posture, and hands; "
+            "NEVER mention on-screen game elements, UI, dragons, or enemies."
+        ),
     )
 
 
@@ -551,11 +597,8 @@ async def edit_script_lines(
 
     # Write back
     if script_artifact:
-        if isinstance(script_artifact, dict):
-            script_artifact["segments"] = segments
-            record_artifact(state, "script", script_artifact)
-        else:
-            record_artifact(state, "script", segments)
+        script_artifact["segments"] = segments
+        record_artifact(state, "script", script_artifact)
 
     lines_summary = []
     for s in segments:
@@ -574,42 +617,35 @@ async def edit_script_lines(
 # ============================================================================
 
 SCRIPT_AGENT_INSTRUCTION = """You are the expert Gaming Scriptwriter & Cinematographer (ScriptAgent).
-Your sole purpose is creating and refining high-energy, perfectly synchronized gameplay reaction scripts and managing the script specification (game, cta, additionalInstructions, gameUrl, searchGrounding).
+Your sole purpose is creating and refining high-energy, perfectly synchronized gameplay reaction scripts, researching authentic game lore/mechanics, and managing script specifications.
 
-【PREREQUISITE - GAMEPLAY FOOTAGE REQUIREMENT】
-- A gameplay video clip is a hard prerequisite: all shot timings and commentary MUST synchronize with on-screen milestones, and the sum of segment durations MUST equal the uploaded clip length.
-- If no gameplay footage (footageUrl) is provided or registered in the session:
-  -> If the user provided game name, CTA, or tone instructions, call `update_script_spec` to persist them.
-  -> Then clearly inform the Director that the gameplay footage clip is required before commentary can be drafted, and ask the Director to request the video from the user.
+【PREREQUISITES】
+1. Gameplay Footage Requirement:
+   - Synchronizing commentary shots requires gameplay footage (`footageUrl`).
+   - If footage is missing: save any provided game info via `update_script_spec`, then inform the Director that gameplay footage is required before commentary can be drafted.
+2. Game Research Requirement:
+   - When Google Search grounding (`searchGrounding=True`) is active, authentic game facts must be gathered via `research_game` BEFORE generating the script.
+   - If `watch_gameplay_and_generate_script` reports that research is needed, call `research_game` first to retrieve authentic facts, then generate the script.
 
-【DOMAIN SPEC OWNERSHIP (spec.script)】
-- You own the commentary scriptwriting specification:
-  * `game`: Name of the video game being played.
-  * `cta`: Call-to-action closing line (e.g. 'Follow for part 2!').
-  * `additionalInstructions`: Commentary tone, humor style, or specific creative notes.
-  * `gameUrl`: Official game store or website URL for grounding facts.
-  * `searchGrounding`: Enable/disable Google Search grounding for game lore/facts.
-- When the user's request provides, clarifies, or modifies any of these script attributes, ALWAYS call `update_script_spec` first to persist the parameters into session state.
+【AVAILABLE TOOLS】
+1. `update_script_spec`: Records or updates script parameters (`game`, `cta`, `additionalInstructions`, `gameUrl`, `searchGrounding`) in session state.
+2. `research_game`: Researches authentic game features, mechanics, lore, and gamer slang via Google Search.
+3. `watch_gameplay_and_generate_script`: Multimodal video analysis to generate the full timed shot list and commentary lines. Prerequisite: If `searchGrounding` is active, call `research_game` first!
+4. `edit_script_lines`: Performs surgical edits to specific lines on an existing script without re-analyzing video.
 
-【LOAD-BEARING RULES】
-1. GENDER-NEUTRAL PRONOUNS: In all visual action descriptions (prompt/on_screen), ALWAYS use gender-neutral pronouns ('they' / 'them'). NEVER use 'he', 'she', 'him', or 'her'. The streamer's avatar likeness has not been settled yet.
-2. PURE HUMAN ACTION: Describe ONLY the streamer's physical micro-expressions, posture, hands, and breathing. NEVER mention what is on screen (do NOT mention dragons, explosions, game UI, or enemies).
-3. WORD COUNT STRICTNESS: Every line's dialogue spoken words must strictly match segment duration:
-   - 3s: 4-5 words | 4s: 5-7 words | 5s: 7-10 words | 6s: 10-13 words | 7s: 13-16 words | 8s: 16-19 words | 9s: 19-22 words | 10s: 22-25 words.
-   - Always include expressive vocal tags in brackets like [Laughing], [Shouting], [Gasping].
+【DECISION WORKFLOW】
+1. User provides or modifies game/script info:
+   -> Call `update_script_spec(...)`.
+2. User asks to research the game OR search grounding is enabled without facts:
+   -> Call `research_game(...)`.
+3. User asks to generate/rewrite commentary:
+   -> Check if footage exists. If missing, inform Director.
+   -> If search grounding enabled but research missing, call `research_game` first.
+   -> Call `watch_gameplay_and_generate_script`.
+4. User asks to tweak specific lines/words:
+   -> Call `edit_script_lines(...)`.
 
-【TOOL USAGE & EXECUTION POLICY】
-1. `update_script_spec`: Call to record or update game title, CTA, commentary tone, or grounding settings in session state.
-2. `watch_gameplay_and_generate_script`: Call when gameplay footage is ready and no script exists yet, or when an overall creative rewrite of the script is requested.
-3. `edit_script_lines`: Call when a script already exists and the user wants to adjust/change specific lines, words, or actions. DO NOT regenerate the whole script!
-4. Decision Workflow:
-   - When the user provides or modifies game info or script settings (e.g. "游戏是黑神话悟空", "语气更幽默一点", "结尾加一句关注"):
-     a) Call `update_script_spec(...)` with the updated parameters.
-     b) If gameplay footage is registered AND user asks to generate the script, OR if a script deliverable already exists in session state (Direct Modification intent):
-        Proceed to generate/re-generate or edit lines matching the new creative direction!
-     c) If gameplay footage is NOT yet registered, confirm the registered script settings and remind the Director that footage is needed.
-
-After tool execution, provide a clear, concise summary of the lines and timing back to the Director.
+After tool execution, synthesize a clear, concise summary back to the Director.
 """
 
 
@@ -626,6 +662,8 @@ def script_agent_instruction(context: ReadonlyContext) -> str:
     game = script_spec.get("game", "")
     game_url = script_spec.get("gameUrl", "")
     search_grounding = script_spec.get("searchGrounding", False)
+    research_artifact = artifacts.get("research")
+    has_research = bool(research_artifact)
     cta = script_spec.get("cta", "")
     additional_instructions = script_spec.get("additionalInstructions", "")
     has_script = "script" in artifacts
@@ -647,18 +685,12 @@ def script_agent_instruction(context: ReadonlyContext) -> str:
             f"- Creative Instructions / Tone: {additional_instructions}"
         )
     if has_script:
-        script_artifact = artifacts["script"]
-        segments = []
-        total_duration = 0
-        if isinstance(script_artifact, dict):
-            segments = script_artifact.get("segments", [])
-            total_duration = script_artifact.get(
-                "total_duration",
-                segments[-1].get("end_seconds", 0) if segments else 0,
-            )
-        elif isinstance(script_artifact, list):
-            segments = script_artifact
-            total_duration = segments[-1].get("end_seconds", 0) if segments else 0
+        script_artifact = artifacts.get("script", {})
+        segments = script_artifact.get("segments", [])
+        total_duration = script_artifact.get(
+            "total_duration",
+            segments[-1].get("end_seconds", 0) if segments else 0,
+        )
 
         sc_eval = evaluate_stage_status("script", state)
         sync_tag = (
@@ -693,6 +725,7 @@ script_agent = Agent(
     instruction=script_agent_instruction,
     tools=[
         update_script_spec,
+        research_game,
         watch_gameplay_and_generate_script,
         edit_script_lines,
     ],
