@@ -308,7 +308,7 @@ async def test_generate_golden_anchor_avatar_with_reference_image():
 @pytest.mark.asyncio
 async def test_avatar_regeneration_triggers_downstream_out_of_sync():
     """Tests that regenerating avatar marks downstream streamer_video OUT_OF_SYNC in DAG."""
-    from app.pipeline import evaluate_stage_status, render_pipeline_kanban
+    from app.pipeline import render_pipeline_kanban
 
     mock_ctx = MagicMock(spec=ToolContext)
     mock_ctx.state = {
