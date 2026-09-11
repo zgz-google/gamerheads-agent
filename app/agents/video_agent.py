@@ -183,6 +183,7 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
 
     work_dir = tempfile.mkdtemp(prefix="streamer_render_")
     rendered_clips: list[str] = []
+    clip_artifacts: list[dict[str, Any]] = []
 
     try:
         logger.info(
@@ -246,6 +247,33 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
                 os.remove(raw_path)
             rendered_clips.append(norm_path)
 
+            # Save individual normalized clip as an artifact
+            with open(norm_path, "rb") as cf:
+                clip_bytes = cf.read()
+
+            seg_id = seg.get("id") if seg.get("id") is not None else (index + 1)
+            clip_artifact_name = (
+                f"output_streamer_clip_{seg_id}_{uuid.uuid4().hex[:8]}.mp4"
+            )
+            clip_part = types.Part(
+                inline_data=types.Blob(
+                    mime_type="video/mp4",
+                    data=clip_bytes,
+                )
+            )
+            await tool_context.save_artifact(clip_artifact_name, clip_part)
+            clip_dur = probe_duration(norm_path)
+            clip_artifacts.append(
+                {
+                    "index": index,
+                    "segment_id": seg_id,
+                    "artifact_name": clip_artifact_name,
+                    "durationSeconds": round(clip_dur, 1) if clip_dur else dur,
+                    "requestedSeconds": dur,
+                    "dialogue": dialogue,
+                }
+            )
+
             # Extract last frame for continuity into next segment
             if index < len(segments) - 1:
                 try:
@@ -307,6 +335,7 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
                 "requestedSeconds": requested_dur,
                 "segmentCount": len(segments),
                 "aspectRatio": aspect_ratio,
+                "clips": clip_artifacts,
             },
         )
 
@@ -315,6 +344,7 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
             f"- Total Duration: {total_dur}s\n"
             f"- Segments Rendered: {len(segments)}\n"
             f"- Aspect Ratio: {aspect_ratio}\n"
+            f"- Clips Saved: {len(clip_artifacts)} individual clip artifacts preserved\n"
             f"Streamer reaction video is ready for final composite over gameplay footage."
         )
 

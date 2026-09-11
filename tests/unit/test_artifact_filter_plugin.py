@@ -39,6 +39,7 @@ async def test_filter_plugin_removes_non_output_artifacts():
         # Deliverables: Stage 2, 3, 4 outputs
         "output_avatar_a1b2c3d4.png": 1,
         "output_avatar_e5f6g7h8.jpg": 2,
+        "output_streamer_clip_1_clip1234.mp4": 1,
         "output_streamer_video_9i0j1k2l.mp4": 1,
         "output_composite_3m4n5o6p.mp4": 1,
     }
@@ -67,9 +68,10 @@ async def test_filter_plugin_removes_non_output_artifacts():
     # All output_ artifacts must be retained
     assert filtered_delta["output_avatar_a1b2c3d4.png"] == 1
     assert filtered_delta["output_avatar_e5f6g7h8.jpg"] == 2
+    assert filtered_delta["output_streamer_clip_1_clip1234.mp4"] == 1
     assert filtered_delta["output_streamer_video_9i0j1k2l.mp4"] == 1
     assert filtered_delta["output_composite_3m4n5o6p.mp4"] == 1
-    assert len(filtered_delta) == 4
+    assert len(filtered_delta) == 5
 
 
 @pytest.mark.asyncio

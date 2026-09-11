@@ -416,6 +416,15 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
         ]
         assert streamer_art_name in saved_artifacts
         assert streamer_art_name.startswith("output_streamer_video_")
+        assert "Clips Saved: 1 individual clip artifacts preserved" in res_streamer
+
+        # Verify individual clip artifact saved and recorded
+        clips = mock_ctx.state["artifacts"]["streamer_video"].get("clips", [])
+        assert len(clips) == 1
+        clip_name = clips[0]["artifact_name"]
+        assert clip_name in saved_artifacts
+        assert clip_name.startswith("output_streamer_clip_1_")
+        assert clips[0]["dialogue"] == "Let's go!"
 
         # 2. Run Stage 4: generate_composite_video
         res_comp = await generate_composite_video(mock_ctx)
@@ -424,3 +433,98 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
         comp_art_name = mock_ctx.state["artifacts"]["composite"]["artifact_name"]
         assert comp_art_name in saved_artifacts
         assert comp_art_name.startswith("output_composite_")
+
+
+@pytest.mark.asyncio
+async def test_generate_streamer_video_saves_all_clips(monkeypatch):
+    """Tests that generate_streamer_video saves an artifact for every individual clip in a multi-segment script."""
+    monkeypatch.setenv("MOCK_OMNI", "1")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        avatar_img = os.path.join(tmpdir, "avatar.png")
+        ffmpeg = get_ffmpeg_exe()
+        await (
+            await asyncio.create_subprocess_exec(
+                ffmpeg,
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=320x240",
+                "-vframes",
+                "1",
+                avatar_img,
+                "-y",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        ).communicate()
+
+        with open(avatar_img, "rb") as f:
+            avatar_bytes = f.read()
+
+        saved_artifacts: dict[str, bytes] = {}
+
+        mock_ctx = MagicMock(spec=ToolContext)
+        mock_ctx.state = {
+            "spec": {
+                "global": {
+                    "aspectRatio": "16:9",
+                    "gamingDevice": "PC",
+                },
+            },
+            "artifacts": {
+                "script": {
+                    "segments": [
+                        {"id": 10, "duration": 2, "dialogue": "Clip one intro"},
+                        {"id": 20, "duration": 3, "dialogue": "Clip two intense"},
+                        {"id": 30, "duration": 2, "dialogue": "Clip three outro"},
+                    ]
+                },
+                "avatar": {
+                    "artifact_name": "avatar_portrait.png",
+                    "mimeType": "image/png",
+                },
+            },
+        }
+
+        async def mock_load_artifact(name: str):
+            if "avatar" in name:
+                return types.Part(
+                    inline_data=types.Blob(mime_type="image/png", data=avatar_bytes)
+                )
+            return None
+
+        async def mock_save_artifact(name: str, part: types.Part):
+            if part and part.inline_data:
+                saved_artifacts[name] = part.inline_data.data
+
+        mock_ctx.load_artifact = AsyncMock(side_effect=mock_load_artifact)
+        mock_ctx.save_artifact = AsyncMock(side_effect=mock_save_artifact)
+
+        res = await generate_streamer_video(mock_ctx)
+        assert "Successfully generated continuous streamer reaction video" in res
+        assert "Clips Saved: 3 individual clip artifacts preserved" in res
+
+        streamer_art = mock_ctx.state["artifacts"]["streamer_video"]
+        assert streamer_art["segmentCount"] == 3
+        assert streamer_art["artifact_name"] in saved_artifacts
+        assert streamer_art["artifact_name"].startswith("output_streamer_video_")
+
+        clips = streamer_art["clips"]
+        assert len(clips) == 3
+
+        # Check each clip
+        assert clips[0]["segment_id"] == 10
+        assert clips[0]["artifact_name"].startswith("output_streamer_clip_10_")
+        assert clips[0]["artifact_name"] in saved_artifacts
+        assert clips[0]["dialogue"] == "Clip one intro"
+
+        assert clips[1]["segment_id"] == 20
+        assert clips[1]["artifact_name"].startswith("output_streamer_clip_20_")
+        assert clips[1]["artifact_name"] in saved_artifacts
+        assert clips[1]["dialogue"] == "Clip two intense"
+
+        assert clips[2]["segment_id"] == 30
+        assert clips[2]["artifact_name"].startswith("output_streamer_clip_30_")
+        assert clips[2]["artifact_name"] in saved_artifacts
+        assert clips[2]["dialogue"] == "Clip three outro"
+

@@ -558,6 +558,12 @@ def render_pipeline_kanban(state: dict[str, Any]) -> str:
                     else str(art_val)
                 )
                 lines.append(f"  * Deliverable{stale_tag}: {sv_name}")
+                if isinstance(art_val, dict):
+                    clips = art_val.get("clips", [])
+                    if clips:
+                        lines.append(
+                            f"    - Clips: {len(clips)} segment clips saved as artifacts"
+                        )
             elif stage_key == "composite":
                 comp_name = (
                     art_val.get("artifact_name", "composite_final.mp4")

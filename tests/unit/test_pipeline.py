@@ -153,13 +153,18 @@ def test_render_pipeline_kanban():
         "artifacts": {
             "script": {"segments": [{"id": 1}], "_updated_at": 150.0},
             "avatar": {"image": "avatar.png", "_updated_at": 120.0},
-            "streamer_video": {"url": "streamer.mp4", "_updated_at": 130.0},
+            "streamer_video": {
+                "artifact_name": "streamer.mp4",
+                "clips": [{"artifact_name": "clip_1.mp4"}, {"artifact_name": "clip_2.mp4"}],
+                "_updated_at": 130.0,
+            },
         },
     }
     kanban = render_pipeline_kanban(state)
     assert "PRODUCTION PIPELINE REAL-TIME KANBAN" in kanban
     assert "[Commentary Script]: ✅ READY" in kanban
     assert "[Streamer Video]: ⚠️ OUT_OF_SYNC" in kanban
+    assert "Clips: 2 segment clips saved as artifacts" in kanban
 
 
 @pytest.mark.asyncio
