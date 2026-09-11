@@ -252,9 +252,7 @@ async def generate_streamer_video(tool_context: ToolContext) -> str:
                 clip_bytes = cf.read()
 
             seg_id = seg.get("id") if seg.get("id") is not None else (index + 1)
-            clip_artifact_name = (
-                f"output_streamer_clip_{seg_id}_{uuid.uuid4().hex[:8]}.mp4"
-            )
+            clip_artifact_name = f"clip_{seg_id}_{uuid.uuid4().hex[:8]}.mp4"
             clip_part = types.Part(
                 inline_data=types.Blob(
                     mime_type="video/mp4",

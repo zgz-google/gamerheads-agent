@@ -423,7 +423,7 @@ async def test_generate_streamer_and_composite_video_flow(monkeypatch):
         assert len(clips) == 1
         clip_name = clips[0]["artifact_name"]
         assert clip_name in saved_artifacts
-        assert clip_name.startswith("output_streamer_clip_1_")
+        assert clip_name.startswith("clip_1_")
         assert clips[0]["dialogue"] == "Let's go!"
 
         # 2. Run Stage 4: generate_composite_video
@@ -514,17 +514,17 @@ async def test_generate_streamer_video_saves_all_clips(monkeypatch):
 
         # Check each clip
         assert clips[0]["segment_id"] == 10
-        assert clips[0]["artifact_name"].startswith("output_streamer_clip_10_")
+        assert clips[0]["artifact_name"].startswith("clip_10_")
         assert clips[0]["artifact_name"] in saved_artifacts
         assert clips[0]["dialogue"] == "Clip one intro"
 
         assert clips[1]["segment_id"] == 20
-        assert clips[1]["artifact_name"].startswith("output_streamer_clip_20_")
+        assert clips[1]["artifact_name"].startswith("clip_20_")
         assert clips[1]["artifact_name"] in saved_artifacts
         assert clips[1]["dialogue"] == "Clip two intense"
 
         assert clips[2]["segment_id"] == 30
-        assert clips[2]["artifact_name"].startswith("output_streamer_clip_30_")
+        assert clips[2]["artifact_name"].startswith("clip_30_")
         assert clips[2]["artifact_name"] in saved_artifacts
         assert clips[2]["dialogue"] == "Clip three outro"
 

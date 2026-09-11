@@ -30,16 +30,16 @@ async def test_filter_plugin_removes_non_output_artifacts():
     plugin = DeliverableArtifactFilterPlugin()
 
     delta = {
-        # Non-deliverables: user uploads, URL imports, temporary files
+        # Non-deliverables: user uploads, URL imports, temporary files, intermediate clips
         "asset_77a88b.mp4": 1,
         "imported_gameplay_clip.mp4": 1,
         "user_recording.mov": 1,
         "my_gameplay_screen.mp4": 1,
         "temp_game_facts.txt": 1,
+        "clip_1_clip1234.mp4": 1,
         # Deliverables: Stage 2, 3, 4 outputs
         "output_avatar_a1b2c3d4.png": 1,
         "output_avatar_e5f6g7h8.jpg": 2,
-        "output_streamer_clip_1_clip1234.mp4": 1,
         "output_streamer_video_9i0j1k2l.mp4": 1,
         "output_composite_3m4n5o6p.mp4": 1,
     }
@@ -64,14 +64,14 @@ async def test_filter_plugin_removes_non_output_artifacts():
     assert "user_recording.mov" not in filtered_delta
     assert "my_gameplay_screen.mp4" not in filtered_delta
     assert "temp_game_facts.txt" not in filtered_delta
+    assert "clip_1_clip1234.mp4" not in filtered_delta
 
     # All output_ artifacts must be retained
     assert filtered_delta["output_avatar_a1b2c3d4.png"] == 1
     assert filtered_delta["output_avatar_e5f6g7h8.jpg"] == 2
-    assert filtered_delta["output_streamer_clip_1_clip1234.mp4"] == 1
     assert filtered_delta["output_streamer_video_9i0j1k2l.mp4"] == 1
     assert filtered_delta["output_composite_3m4n5o6p.mp4"] == 1
-    assert len(filtered_delta) == 5
+    assert len(filtered_delta) == 4
 
 
 @pytest.mark.asyncio
