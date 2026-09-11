@@ -249,10 +249,18 @@ except Exception as e:
         EXISTING_RE=$(echo "$CHECK_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('reasoningEngine', ''))")
         EXISTING_REASON=$(echo "$CHECK_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('reason', ''))")
 
-        echo "===> Gemini Enterprise: Agent is already registered! Skipping registration."
+        echo "===> Gemini Enterprise: Agent is already registered! Ensuring sharingConfig is ALL_USERS..."
+        curl -s -X PATCH \
+          "${DISCOVERY_HOST}/v1alpha/${EXISTING_AGENT_NAME}?updateMask=sharingConfig" \
+          -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+          -H "Content-Type: application/json" \
+          -H "X-Goog-User-Project: ${PROJECT_NUM}" \
+          -d '{"sharingConfig": {"scope": "ALL_USERS"}}' >/dev/null || true
+
         echo "     Existing Agent: $EXISTING_AGENT_NAME"
         echo "     Display Name:   $EXISTING_DISPLAY_NAME"
         echo "     Match Reason:   $EXISTING_REASON"
+        echo "     Sharing Config: ALL_USERS (public to all engine users)"
         GE_RESULT_STATUS="SKIPPED_ALREADY_EXISTS"
     else
         echo "===> Registering agent to Gemini Enterprise (Engine ID: ${CLEAN_GE_APP_ID})..."
@@ -264,6 +272,9 @@ except Exception as e:
           -d "{
             \"displayName\": \"${DISPLAY_NAME}\",
             \"description\": \"${AGENT_DESC}\",
+            \"sharingConfig\": {
+              \"scope\": \"ALL_USERS\"
+            },
             \"adk_agent_definition\": {
               \"tool_settings\": { \"tool_description\": \"${AGENT_DESC}\" },
               \"provisioned_reasoning_engine\": {
