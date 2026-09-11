@@ -1,7 +1,7 @@
 name: gamerheads-agent
 displayName:
-  zh: GamerHeads 游戏反应视频导演
-  en: GamerHeads Gameplay Reaction Director
+  zh: AI 游戏主播创意导演
+  en: AI Gaming Streamer Creative Director
 description:
   zh: 专为游戏创作者打造的 AIGC 导演 Agent, 将实机游戏视频自动转化为带个性化主播出镜、解说配音与字幕画中画的高品质反应视频。
   en: An AIGC creative director that transforms gameplay footage into polished streamer reaction videos with custom avatars, commentary scripts, and PIP post-production.

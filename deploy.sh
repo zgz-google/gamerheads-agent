@@ -42,7 +42,7 @@ SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 BUCKET_NAME="${PROJECT_ID}-gamerheads-artifacts"
 DEPLOYER=$(gcloud config get-value account 2>/dev/null)
 
-echo "Deploying GamerHeads Gameplay Reaction Director to project: $PROJECT_ID (region: $REGION)"
+echo "Deploying AI Gaming Streamer Creative Director to project: $PROJECT_ID (region: $REGION)"
 [ -n "$GE_APP_ID" ] && echo "  + Gemini Enterprise registration (APP_ID: $GE_APP_ID)"
 
 gcloud config set project "$PROJECT_ID" --quiet
@@ -53,7 +53,7 @@ gcloud services enable iam.googleapis.com --project="$PROJECT_ID" --quiet
 
 if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="$PROJECT_ID" &>/dev/null; then
     gcloud iam service-accounts create "$SA_NAME" \
-        --display-name="GamerHeads Director runtime" --project="$PROJECT_ID" --quiet
+        --display-name="AI Gaming Streamer Creative Director runtime" --project="$PROJECT_ID" --quiet
 fi
 
 for role in roles/aiplatform.user roles/serviceusage.serviceUsageConsumer roles/logging.logWriter roles/cloudtrace.agent; do

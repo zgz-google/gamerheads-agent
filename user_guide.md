@@ -1,14 +1,14 @@
-# GamerHeads User Guide
+# AI Gaming Streamer Creative Director User Guide
 
 ## Overview
-**GamerHeads Gameplay Reaction Director** is an intelligent AIGC creative director agent that transforms raw gameplay footage into polished, broadcast-grade streamer reaction videos. By treating the Agent like an experienced creative director in a professional production studio, users can produce end-to-end reaction videos in minutes—complete with custom virtual streamer personas, timed commentary scripts, lip-synced reaction synthesis, and customizable picture-in-picture (PIP) / split-screen post-production. 
+**AI Gaming Streamer Creative Director** is an intelligent AIGC creative director agent that transforms raw gameplay footage into polished, broadcast-grade streamer reaction videos. By treating the Agent like an experienced creative director in a professional production studio, users can produce end-to-end reaction videos in minutes—complete with custom virtual streamer personas, timed commentary scripts, lip-synced reaction synthesis, and customizable picture-in-picture (PIP) / split-screen post-production. 
 
 This enables game creators, esports teams, and studios to produce high-engagement gaming reaction content at scale without needing expensive camera setups, motion capture equipment, or tedious manual video editing.
 
 ---
 
 ## What it does
-GamerHeads covers the complete end-to-end lifecycle of gameplay reaction video production:
+AI Gaming Streamer Creative Director covers the complete end-to-end lifecycle of gameplay reaction video production:
 
 1. **Footage & Concept Ingestion**:
    - Ingests raw gameplay clips via direct video URLs, Google Drive links, or direct uploads.

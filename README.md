@@ -1,4 +1,4 @@
-# GamerHeads Gameplay Reaction Director
+# AI Gaming Streamer Creative Director
 
 An AIGC creative director agent built with **Google ADK (Agent Development Kit)** and **`agents-cli`**. It automatically transforms raw gameplay footage into polished streamer reaction videos complete with **custom streamer likenesses, commentary scripts, lip-synced reaction synthesis, and picture-in-picture (PIP) / split-screen post-production**.
 
@@ -24,7 +24,7 @@ An AIGC creative director agent built with **Google ADK (Agent Development Kit)*
 
 ## 🚀 One-Click Deployment Guide (`deploy.sh`)
 
-The repository provides a production-ready one-click deployment script, [`deploy.sh`](file:///Users/zgz/gamerheads-agent/deploy.sh), which fully automates deploying the GamerHeads Director to **Google Cloud Vertex AI Agent Runtime (Reasoning Engine)**, with optional seamless registration to **Gemini Enterprise**.
+The repository provides a production-ready one-click deployment script, [`deploy.sh`](file:///Users/zgz/gamerheads-agent/deploy.sh), which fully automates deploying the AI Gaming Streamer Creative Director to **Google Cloud Vertex AI Agent Runtime (Reasoning Engine)**, with optional seamless registration to **Gemini Enterprise**.
 
 ### Quick Deploy
 
